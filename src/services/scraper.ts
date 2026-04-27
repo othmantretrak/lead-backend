@@ -52,11 +52,11 @@ async function newStealthPage(browser: Browser): Promise<Page> {
       height: 800 + Math.floor(Math.random() * 150)
     },
     locale: "en-US",
-    timezoneId: "Europe/Paris",
+    timezoneId: "America/New_York",
     screen: { width: 1920, height: 1080 },
     deviceScaleFactor: 1,
     extraHTTPHeaders: {
-      "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
       "sec-ch-ua": '"Chromium";v="134", "Not;A=Brand";v="99"',
       "sec-ch-ua-mobile": "?0",
       "sec-ch-ua-platform": '"Windows"',
@@ -140,13 +140,25 @@ async function scrapeGoogleMaps(page: Page, query: string, limit: number): Promi
   await page.goto(searchUrl, { timeout: SCRAPE_TIMEOUT, waitUntil: "networkidle" });
   await randomDelay(3000, 5000);
 
-  try {
-    const acceptButton = page.locator('button:has-text("Accept all")').first();
-    if (await acceptButton.isVisible({ timeout: 4000 })) {
-      await acceptButton.click();
-      await randomDelay(800, 1500);
-    }
-  } catch { }
+  const consentSelectors = [
+    'button:has-text("Accept all")',       // English
+    'button:has-text("Alle akzeptieren")', // German
+    'button:has-text("Tout accepter")',    // French
+    'button:has-text("Aceptar todo")',     // Spanish
+    'button:has-text("Accetta tutto")',    // Italian
+  ];
+
+  for (const selector of consentSelectors) {
+    try {
+      const btn = page.locator(selector).first();
+      if (await btn.isVisible({ timeout: 2000 })) {
+        await btn.click();
+        console.log(`   ✅ Consent wall dismissed (${selector})`);
+        await randomDelay(800, 1500);
+        break;
+      }
+    } catch { }
+  }
 
   const results: Omit<ScrapedLead, "email">[] = [];
   const seen = new Set<string>();
