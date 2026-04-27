@@ -36,9 +36,10 @@ async function launchBrowser(): Promise<Browser> {
       "--disable-dev-shm-usage",      // ← key one for shared hosting
       "--disable-gpu",
       "--no-zygote",                  // ← helps in restricted environments
-      "--single-process",             // ← runs everything in one process
       "--disable-extensions",
       "--disable-software-rasterizer",
+      "--disable-blink-features=AutomationControlled", // ← add this
+
     ],
   });
 }

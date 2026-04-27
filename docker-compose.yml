@@ -1,0 +1,13 @@
+services:
+  app:
+    build: ./app
+    container_name: lead-gen-app
+    restart: unless-stopped
+    ports:
+      - "3001:3001" # ← now exposed to the host
+    environment:
+      - NODE_ENV=production
+    deploy:
+      resources:
+        limits:
+          memory: 1g
