@@ -1,6 +1,6 @@
 services:
   app:
-    build: ./app
+    build: .
     container_name: lead-gen-app
     restart: unless-stopped
     ports:
