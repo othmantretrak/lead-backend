@@ -16,7 +16,7 @@ RUN pnpm install --frozen-lockfile
 COPY tsconfig.json ./
 COPY src/ ./src/
 COPY migrations/ ./migrations/
-
+RUN mkdir -p /app/debug
 # Build TS → JS
 RUN pnpm run build
 

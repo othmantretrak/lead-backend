@@ -190,6 +190,17 @@ async function scrapeGoogleMaps(page: Page, query: string, limit: number): Promi
       }
     }
   }
+  if (results.length === 0) {
+    const timestamp = Date.now();
+    await page.screenshot({
+      path: `/app/debug/maps-${timestamp}.png`,
+      fullPage: true
+    });
+    const html = await page.content();
+    const fs = await import('fs');
+    fs.writeFileSync(`/app/debug/maps-${timestamp}.html`, html);
+    console.log(`   📸 Debug screenshot saved: maps-${timestamp}.png`);
+  }
 
   return results;
 }
