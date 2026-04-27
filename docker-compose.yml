@@ -1,12 +1,12 @@
 services:
   app:
-    build: .
+    build: . # ← Dockerfile is at root now, not ./app
     container_name: lead-gen-app
     restart: unless-stopped
     ports:
-      - "3001:3001" # ← now exposed to the host
-    environment:
-      - NODE_ENV=production
+      - "3001:3001"
+    env_file:
+      - .env # ← loads your env vars automatically
     deploy:
       resources:
         limits:
