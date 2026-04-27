@@ -1,4 +1,5 @@
-FROM mcr.microsoft.com/playwright:v1.52.0-noble
+# Keep this version in sync with the "playwright" version in package.json
+FROM mcr.microsoft.com/playwright:v1.59.1-noble
 
 WORKDIR /app
 
