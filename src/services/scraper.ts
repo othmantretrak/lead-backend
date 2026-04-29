@@ -2,7 +2,7 @@ import { chromium as playwrightChromium } from 'playwright-extra';
 import stealth from 'puppeteer-extra-plugin-stealth';
 import { Browser, Page } from 'playwright';
 import { leads, scrapeJobs, settings } from "../db/schema";
-import { eq, or } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from '../db/drizzle';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -182,7 +182,7 @@ async function scrapeGoogleMaps(page: Page, query: string, limit: number): Promi
         if (!name || seen.has(name)) continue;
 
         await nameEl.click();
-        await randomDelay(2000, 3500);
+        await randomDelay(4000, 6500);
 
         const website = await page.locator('a[data-item-id="authority"]').getAttribute("href").catch(() => null);
         const phone = await page.locator('button[data-item-id^="phone"]').textContent().catch(() => null);

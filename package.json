@@ -8,13 +8,15 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "ts-node src/db/seed.ts",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "auth:generate": "better-auth generate"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",
+    "better-auth": "^1.6.9",
     "cors": "^2.8.5",
     "dotenv": "^16.4.1",
     "drizzle-orm": "^0.45.2",

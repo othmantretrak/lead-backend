@@ -9,11 +9,11 @@ import { settingsRouter } from "./routes/settings";
 import { runDailySendJob } from "./services/mailer";
 import { initScheduler, getSchedulerStatus } from "./services/scheduler";
 
+
 const app: express.Application = express();
 const PORT = process.env.PORT || 3001;
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
-
 app.use(express.json());
 
 app.use(
