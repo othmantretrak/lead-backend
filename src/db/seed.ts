@@ -1,62 +1,327 @@
+/**
+ * seed.ts — run with: npx tsx db/seed.ts
+ *
+ * Populates the database with realistic sample data for development.
+ * Requires DATABASE_URL in env (e.g. postgresql://user:pass@localhost:5432/emailcopilot)
+ */
+
 import "dotenv/config";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
-import { settings, emailTemplates } from "./schema";
-import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
+import * as schema from "./schema";
 
-const client = postgres(process.env.DATABASE_URL!, { ssl: "require" });
-const db = drizzle(client);
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const db = drizzle(pool, { schema });
 
-async function main() {
-  console.log("🌱 Seeding database...");
+async function seed() {
+  console.log("🌱 Seeding database...\n");
 
-  const defaultSettings = [
-    { key: "daily_send_limit",       value: "10" },
-    { key: "scrape_query",           value: "restaurants in Paris" },
-    { key: "scrape_results_per_run", value: "10" },
-    { key: "send_hour",              value: "9" },
-    { key: "scrape_hours",           value: "8,14" },
-    { key: "smtp_host",              value: "" },
-    { key: "smtp_port",              value: "587" },
-    { key: "smtp_user",              value: "" },
-    { key: "smtp_pass",              value: "" },
-    { key: "smtp_from_name",         value: "" },
-  ];
+  // Clean up existing data first
+  console.log("🧹 Cleaning up existing data...");
+  await db.delete(schema.invoices);
+  await db.delete(schema.subscriptions);
+  await db.delete(schema.emailLogs);
+  await db.delete(schema.integrations);
+  await db.delete(schema.leads);
+  await db.delete(schema.scrapeJobs);
+  await db.delete(schema.copilots);
+  await db.delete(schema.emailTemplates);
+  await db.delete(schema.emailProfiles);
+  await db.delete(schema.scrapeResults);
+  await db.delete(schema.scrapeProfiles);
+  await db.delete(schema.settings);
+  await db.delete(schema.users);
+  console.log("✅ Cleanup complete\n");
 
-  for (const s of defaultSettings) {
-    const existing = await db
-      .select()
-      .from(settings)
-      .where(eq(settings.key, s.key))
-      .limit(1);
+  // ── Users ──────────────────────────────────────────────────────────────────
+  const [user] = await db
+    .insert(schema.users)
+    .values({
+      firstName: "Alex",
+      lastName: "Martin",
+      email: "alex@example.com",
+      passwordHash: "$2b$10$exampleHashForDevOnlyDoNotUseInProd",
+      timezone: "America/New_York",
+      theme: "light",
+      notifyOnReply: true,
+      notifyOnBounce: true,
+      notifyWeeklyReport: true,
+    })
+    .returning();
 
-    if (existing.length === 0) {
-      await db.insert(settings).values(s);
-      console.log(`   ✅ Setting: ${s.key}`);
-    } else {
-      console.log(`   ⏭️  Setting already exists: ${s.key}`);
-    }
-  }
+  console.log(`✅ Created user: ${user.email} (id=${user.id})`);
 
-  const existingTemplate = await db.select().from(emailTemplates).limit(1);
+  // ── Email Profiles ─────────────────────────────────────────────────────────
+  const [ep1, ep2] = await db
+    .insert(schema.emailProfiles)
+    .values([
+      {
+        userId: user.id,
+        name: "Primary Outreach",
+        email: "outreach@example.com",
+        provider: "gmail",
+        status: "active",
+        dailyLimit: 150,
+        sentToday: 47,
+      },
+      {
+        userId: user.id,
+        name: "Secondary Gmail",
+        email: "backup@example.com",
+        provider: "gmail",
+        status: "active",
+        dailyLimit: 100,
+        sentToday: 12,
+      },
+      {
+        userId: user.id,
+        name: "Sendgrid SMTP",
+        email: "noreply@example.com",
+        provider: "smtp",
+        smtpHost: "smtp.sendgrid.net",
+        smtpPort: 587,
+        username: "apikey",
+        status: "inactive",
+        dailyLimit: 500,
+        sentToday: 0,
+      },
+    ])
+    .returning();
 
-  if (existingTemplate.length === 0) {
-    await db.insert(emailTemplates).values({
-      name:     "Cold outreach v1",
-      subject:  "Quick question for {{companyName}}",
-      body:     `Hi,\n\nI came across {{companyName}} and wanted to reach out quickly.\n\n[Your value proposition here]\n\nWould you be open to a short 15-minute call this week?\n\nBest,\n[Your name]`,
-      isActive: true,
-    });
-    console.log("   ✅ Starter email template seeded");
-  } else {
-    console.log("   ⏭️  Email template already exists");
-  }
+  console.log(`✅ Created ${3} email profiles`);
 
-  console.log("✅ Seed complete");
-  process.exit(0);
+  // ── Scrape Profiles ────────────────────────────────────────────────────────
+  const [sp1] = await db
+    .insert(schema.scrapeProfiles)
+    .values([
+      {
+        userId: user.id,
+        name: "LinkedIn Tech Founders",
+        url: "https://linkedin.com/search/results/people/?keywords=founder+tech",
+        selector: ".reusable-search__result-container",
+        fields: ["name", "title", "company", "location"],
+        schedule: "0 9 * * 1",
+        status: "done",
+        resultsCount: 342,
+        lastRun: new Date("2025-04-28"),
+      },
+      {
+        userId: user.id,
+        name: "Crunchbase Seed Startups",
+        url: "https://crunchbase.com/discover/organizations",
+        selector: ".component--card",
+        fields: ["name", "email", "website", "funding"],
+        status: "idle",
+        resultsCount: 0,
+        lastRun: null,
+      },
+    ])
+    .returning();
+
+  console.log(`✅ Created ${2} scrape profiles`);
+
+  // ── Templates ──────────────────────────────────────────────────────────────
+  const [t1, t2, t3] = await db
+    .insert(schema.emailTemplates)
+    .values([
+      {
+        userId: user.id,
+        name: "Cold Intro — SaaS Founders",
+        subject: "Quick question about {{company}}",
+        body: `Hi {{firstName}},
+
+I came across {{company}} and was impressed by what you're building in the {{industry}} space.
+
+We help companies like yours automate personalized email outreach — typically cutting the time spent on prospecting by 70%.
+
+Would it make sense to hop on a 15-minute call this week?
+
+Best,
+{{senderName}}`,
+        category: "Cold Outreach",
+        variables: ["firstName", "company", "industry", "senderName"],
+        usageCount: 24,
+      },
+      {
+        userId: user.id,
+        name: "Follow-up #1 (3 days)",
+        subject: "Re: Quick question about {{company}}",
+        body: `Hi {{firstName}},
+
+Just wanted to follow up on my previous email in case it got buried.
+
+I know your inbox is probably slammed — I'll keep this short. We've helped {{similarCompany}} increase reply rates by 3x in the first month.
+
+Worth a quick chat?
+
+{{senderName}}`,
+        category: "Follow-up",
+        variables: ["firstName", "company", "similarCompany", "senderName"],
+        usageCount: 18,
+      },
+      {
+        userId: user.id,
+        name: "Re-engagement — 90 Days",
+        subject: "Checking back in, {{firstName}}",
+        body: `Hi {{firstName}},
+
+It's been a while since we last spoke. A lot has changed at {{senderCompany}} since then — we've launched new features that I think would be a great fit for {{company}}.
+
+Open to reconnecting?
+
+{{senderName}}`,
+        category: "Re-engagement",
+        variables: ["firstName", "company", "senderCompany", "senderName"],
+        usageCount: 6,
+      },
+      {
+        userId: user.id,
+        name: "Partnership Outreach",
+        subject: "Partnership idea for {{company}} × {{senderCompany}}",
+        body: `Hi {{firstName}},
+
+I've been following {{company}}'s work and I think there's a compelling partnership opportunity between our two teams.
+
+We serve similar audiences and I'd love to explore co-marketing or a referral arrangement.
+
+Would you be open to a 20-min intro call?
+
+{{senderName}}`,
+        category: "Partnership",
+        variables: ["firstName", "company", "senderCompany", "senderName"],
+        usageCount: 3,
+      },
+    ])
+    .returning();
+
+  console.log(`✅ Created ${4} templates`);
+
+  // ── Copilots ───────────────────────────────────────────────────────────────
+  await db.insert(schema.copilots).values([
+    {
+      userId: user.id,
+      name: "SaaS Founder Blitz",
+      description: "Cold outreach targeting early-stage SaaS founders from Crunchbase.",
+      status: "active",
+      emailProfileId: ep1.id,
+      scrapeProfileId: sp1.id,
+      templateId: t1.id,
+      settings: { sendTimeStart: "09:00", sendTimeEnd: "17:00", delayMinutes: 90 },
+      emailsSent: 312,
+      emailsOpened: 148,
+      emailsReplied: 21,
+    },
+    {
+      userId: user.id,
+      name: "LinkedIn Warm-Up",
+      description: "Gentle outreach to LinkedIn connections.",
+      status: "paused",
+      emailProfileId: ep2.id,
+      scrapeProfileId: sp1.id,
+      templateId: t2.id,
+      settings: { sendTimeStart: "10:00", sendTimeEnd: "16:00", delayMinutes: 120 },
+      emailsSent: 54,
+      emailsOpened: 30,
+      emailsReplied: 4,
+    },
+    {
+      userId: user.id,
+      name: "Re-engagement Campaign",
+      description: "Win back cold leads from 90+ days ago.",
+      status: "draft",
+      emailProfileId: null,
+      scrapeProfileId: null,
+      templateId: t3.id,
+      settings: {},
+      emailsSent: 0,
+      emailsOpened: 0,
+      emailsReplied: 0,
+    },
+  ]);
+
+  console.log(`✅ Created ${3} copilots`);
+
+  // ── Integrations ───────────────────────────────────────────────────────────
+  await db.insert(schema.integrations).values([
+    {
+      userId: user.id,
+      provider: "google",
+      accessToken: "ya29.example_token",
+      refreshToken: "1//example_refresh",
+      expiresAt: new Date(Date.now() + 3600 * 1000),
+      connectedAt: new Date("2025-03-10"),
+    },
+    {
+      userId: user.id,
+      provider: "slack",
+      accessToken: "xoxb-example-slack-token",
+      connectedAt: new Date("2025-04-01"),
+    },
+    {
+      userId: user.id,
+      provider: "hunter",
+      apiKey: "hunter_api_key_example",
+      connectedAt: new Date("2025-04-15"),
+    },
+  ]);
+
+  console.log(`✅ Created ${3} integrations`);
+
+  // ── Subscriptions & Invoices ───────────────────────────────────────────────
+  const [sub] = await db
+    .insert(schema.subscriptions)
+    .values({
+      userId: user.id,
+      planId: "pro",
+      status: "active",
+      stripeSubscriptionId: "sub_example123",
+      stripeCustomerId: "cus_example123",
+      currentPeriodStart: new Date("2025-05-01"),
+      currentPeriodEnd: new Date("2025-06-01"),
+      cancelAtPeriodEnd: false,
+    })
+    .returning();
+
+  await db.insert(schema.invoices).values([
+    {
+      userId: user.id,
+      subscriptionId: sub.id,
+      stripeInvoiceId: "in_example_apr",
+      amount: 7900,
+      currency: "usd",
+      status: "paid",
+      downloadUrl: "https://pay.stripe.com/invoice/example_apr",
+      paidAt: new Date("2025-04-01"),
+    },
+    {
+      userId: user.id,
+      subscriptionId: sub.id,
+      stripeInvoiceId: "in_example_mar",
+      amount: 7900,
+      currency: "usd",
+      status: "paid",
+      downloadUrl: "https://pay.stripe.com/invoice/example_mar",
+      paidAt: new Date("2025-03-01"),
+    },
+    {
+      userId: user.id,
+      subscriptionId: sub.id,
+      stripeInvoiceId: "in_example_feb",
+      amount: 2900,
+      currency: "usd",
+      status: "paid",
+      downloadUrl: "https://pay.stripe.com/invoice/example_feb",
+      paidAt: new Date("2025-02-01"),
+    },
+  ]);
+
+  console.log(`✅ Created subscription (Pro) + ${3} invoices`);
+
+  console.log("\n🎉 Seed complete!");
+  await pool.end();
 }
 
-main().catch((e) => {
-  console.error("❌ Seed failed:", e);
+seed().catch((err) => {
+  console.error("❌ Seed failed:", err);
   process.exit(1);
 });

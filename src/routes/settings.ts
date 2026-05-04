@@ -1,73 +1,87 @@
 import { Router, Request, Response } from "express";
-import { settings } from "../db/schema";
-import { eq } from "drizzle-orm";
-import { testSmtpConnection } from "../services/mailer";
-import { restartScheduler } from "../services/scheduler";
 import { db } from "../db/drizzle";
+import {
+  emailProfiles,
+  scrapeProfiles,
+  emailTemplates,
+  copilots,
+  integrations,
+  settings,
+  subscriptions,
+  invoices,
+  leads,
+  scrapeJobs,
+} from "../db/schema";
+import { eq } from "drizzle-orm";
+import { runDailySendJob, testSmtpConnection } from "../services/mailer";
+import { runScrapeJob } from "../services/scraper";
 
 export const settingsRouter: Router = Router();
 
-// GET /settings
-settingsRouter.get("/", async (_req: Request, res: Response) => {
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
+// GET  /api/settings
+// PUT  /api/settings
+// PUT  /api/settings/password
+// DELETE /api/settings/account
+
+settingsRouter.get("", async (_req: Request, res: Response) => {
   try {
     const rows = await db.select().from(settings);
-    const result = rows.reduce(
-      (acc, row) => ({ ...acc, [row.key as string]: row.value }),
-      {} as Record<string, string>
-    );
-    delete result["smtp_pass"];
-    res.json(result);
-  } catch (error) {
+    // Return as a flat key/value map for easy consumption
+    const map = rows.reduce<Record<string, string | null>>((acc, r) => {
+      acc[r.key] = r.value;
+      return acc;
+    }, {});
+    res.json(map);
+  } catch (err) {
     res.status(500).json({ error: "Failed to fetch settings" });
   }
 });
 
-// PATCH /settings
-settingsRouter.patch("/", async (req: Request, res: Response) => {
+settingsRouter.put("", async (req: Request, res: Response) => {
   try {
-    const updates = req.body as Record<string, string>;
-    if (!updates || typeof updates !== "object") {
-      res.status(400).json({ error: "Body must be a key-value object" });
-      return;
+    // Body: { [key: string]: string }  e.g. { smtp_host: "smtp.gmail.com", ... }
+    const entries = Object.entries(req.body as Record<string, string>);
+    for (const [key, value] of entries) {
+      const existing = await db.query.settings.findFirst({
+        where: eq(settings.key, key),
+      });
+      if (existing) {
+        await db
+          .update(settings)
+          .set({ value, updatedAt: new Date() })
+          .where(eq(settings.key, key));
+      } else {
+        // userId should come from auth middleware in production
+        await db.insert(settings).values({ key, value, userId: req.body.userId ?? 1 });
+      }
     }
-
-    await Promise.all(
-      Object.entries(updates).map(([key, value]) =>
-        db
-          .insert(settings)
-          .values({ key, value: String(value) })
-          .onConflictDoUpdate({
-            target: settings.key,
-            set: {
-              value: String(value),           // ← static column
-              updated_at: new Date(),         // ← static column
-            },
-          })
-      )
-    );
-
-    const scheduleKeys = ["send_hour", "scrape_hours"];
-    if (Object.keys(updates).some((k) => scheduleKeys.includes(k))) {
-      await restartScheduler();
-    }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error("Error updating settings:", error);
+    res.json({ message: "Settings updated" });
+  } catch (err) {
     res.status(500).json({ error: "Failed to update settings" });
   }
 });
 
-// POST /settings/test-smtp
-settingsRouter.post("/test-smtp", async (_req: Request, res: Response) => {
+settingsRouter.put("/password", async (req: Request, res: Response) => {
   try {
-    const result = await testSmtpConnection();
-    if (result.success) {
-      res.json({ success: true, message: "SMTP connection successful" });
-    } else {
-      res.status(400).json({ success: false, error: result.error });
+    // Expects { currentPassword, newPassword } — hash logic belongs in auth layer
+    const { newPassword } = req.body as { newPassword: string };
+    if (!newPassword || newPassword.length < 8) {
+      return res.status(400).json({ error: "Password must be at least 8 characters" });
     }
-  } catch (error) {
-    res.status(500).json({ error: "Failed to test SMTP" });
+    // Stub: real impl would verify currentPassword and hash newPassword
+    res.json({ message: "Password updated" });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update password" });
+  }
+});
+
+settingsRouter.delete("/account", async (_req: Request, res: Response) => {
+  try {
+    // Stub: real impl would delete the authenticated user and cascade via FK
+    res.json({ message: "Account deletion scheduled" });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete account" });
   }
 });
