@@ -51,12 +51,12 @@ emailsRouter.get("/templates", async (_req: Request, res: Response) => {
 // POST /emails/templates
 emailsRouter.post("/templates", async (req: Request, res: Response) => {
   try {
-    const { name, subject, body } = req.body;
+    const { name, subject, body, userId } = req.body;
     if (!name || !subject || !body) {
       res.status(400).json({ error: "name, subject and body are required" });
       return;
     }
-    const [template] = await db.insert(emailTemplates).values({ name, subject, body }).returning();
+    const [template] = await db.insert(emailTemplates).values({ name, subject, body, userId }).returning();
     res.status(201).json(template);
   } catch (error) {
     res.status(500).json({ error: "Failed to create template" });
