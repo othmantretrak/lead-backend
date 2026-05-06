@@ -23,6 +23,8 @@ const app: express.Application = express();
 const PORT = process.env.PORT || 3001;
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
+// Important: Parse urlencoded bodies (Mollie webhooks)
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 app.use(
