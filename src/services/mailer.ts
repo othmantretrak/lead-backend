@@ -65,14 +65,14 @@ async function sendEmail(lead: Lead, template: EmailTemplate): Promise<SendResul
       text: body,
     });
 
-    await db.insert(emailLogs).values({ leadId: lead.id, templateId: template.id, subject, status: "sent" });
+    await db.insert(emailLogs).values({ leadId: lead.id, usersId: template.userId, templateId: template.id, subject, status: "sent" });
     await db.update(leads).set({ status: "sent", emailedAt: new Date() }).where(eq(leads.id, lead.id));
 
     console.log(`✅ Email sent to ${lead.email} (${lead.companyName})`);
     return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    await db.insert(emailLogs).values({ leadId: lead.id, templateId: template.id, subject: template.subject, status: "failed", errorMessage: message });
+    await db.insert(emailLogs).values({ leadId: lead.id, usersId: template.userId, templateId: template.id, subject: template.subject, status: "failed", errorMessage: message });
     console.error(`❌ Failed to send to ${lead.email}: ${message}`);
     return { success: false, error: message };
   }
