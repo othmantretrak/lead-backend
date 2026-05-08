@@ -165,6 +165,9 @@ export const leads = pgTable("leads", {
 
 export const emailLogs = pgTable("email_logs", {
   id: serial("id").primaryKey(),
+  usersId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   leadId: integer("lead_id")
     .notNull()
     .references(() => leads.id, { onDelete: "cascade" }),
@@ -292,6 +295,14 @@ export const invoices = pgTable("invoices", {
   downloadUrl: text("download_url"),     // Mollie hosted payment page / receipt
   paidAt: timestamp("paid_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const usage = pgTable("usage", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }),
+  month: varchar("month", { length: 7 }), // "2026-05"
+  emailsSent: integer("emails_sent").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // ─── Type exports ─────────────────────────────────────────────────────────────
