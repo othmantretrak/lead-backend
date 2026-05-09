@@ -3,6 +3,8 @@ import { leads, emailTemplates, emailLogs, settings } from "../db/schema";
 import { eq, gte, and, count } from "drizzle-orm";
 import type { Lead, EmailTemplate } from "../db/types";
 import { db } from "../db/drizzle";
+import { incrementUsage } from "../lib/helpers";
+import { getAuth } from "@clerk/express";
 
 interface SmtpConfig {
   host: string; port: number; user: string; pass: string; fromName: string;
@@ -51,8 +53,12 @@ function interpolate(text: string, lead: Lead): string {
     .replace(/{{phone}}/g, typeof lead.phone === "string" ? lead.phone : "");
 }
 
-async function sendEmail(lead: Lead, template: EmailTemplate): Promise<SendResult> {
+async function sendEmail(userId: number, subscriptionId: number, lead: Lead, template: EmailTemplate): Promise<SendResult> {
+
   try {
+
+
+
     const config = await getSmtpConfig();
     const transporter = createTransporter(config);
     const subject = interpolate(typeof template.subject === "string" ? template.subject : "", lead);
@@ -69,6 +75,7 @@ async function sendEmail(lead: Lead, template: EmailTemplate): Promise<SendResul
     await db.update(leads).set({ status: "sent", emailedAt: new Date() }).where(eq(leads.id, lead.id));
 
     console.log(`✅ Email sent to ${lead.email} (${lead.companyName})`);
+    await incrementUsage(userId, subscriptionId, { emailsSent: 1 });
     return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -78,7 +85,7 @@ async function sendEmail(lead: Lead, template: EmailTemplate): Promise<SendResul
   }
 }
 
-export async function runDailySendJob(): Promise<void> {
+export async function runDailySendJob(userId: number, subscriptionId: number): Promise<void> {
   console.log("📧 Daily send job started...");
 
   const allSettings = await db.select().from(settings);
@@ -138,7 +145,7 @@ export async function runDailySendJob(): Promise<void> {
       console.log(`⏳ Waiting ${Math.round(delayMs / 1000)}s...`);
       await sleep(delayMs);
     }
-    await sendEmail(pendingLeads[i], template);
+    await sendEmail(userId, subscriptionId, pendingLeads[i], template);
   }
 
   console.log("✅ Daily send job complete.");

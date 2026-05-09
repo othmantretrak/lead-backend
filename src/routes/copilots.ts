@@ -12,9 +12,10 @@ import {
     leads,
     scrapeJobs,
 } from "../db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { runDailySendJob, testSmtpConnection } from "../services/mailer";
 import { runScrapeJob } from "../services/scraper";
+import { incrementUsage } from "../lib/helpers";
 
 export const copilotsRouter: Router = Router();
 
@@ -52,7 +53,11 @@ copilotsRouter.get("/:id", async (req: Request, res: Response) => {
 copilotsRouter.post("/", async (req: Request, res: Response) => {
     try {
         const user = req.dbUser;
+        const subs = await db.select().from(subscriptions).where(eq(subscriptions.userId, user.id)).orderBy(desc(subscriptions.createdAt));
+        const sub = subs[0];
+        if (!sub) return res.status(404).json({ error: "No subscription found" });
         const [created] = await db.insert(copilots).values({ ...req.body, userId: user.id }).returning();
+        await incrementUsage(user.id, sub.id, { copilotsCreated: 1 });
         res.status(201).json(created);
     } catch (err) {
         console.error("Error creating copilot:", err);
@@ -94,6 +99,9 @@ copilotsRouter.patch("/:id/status", async (req: Request, res: Response) => {
     try {
         const id = Number(req.params.id);
         const user = req.dbUser;
+        const subs = await db.select().from(subscriptions).where(eq(subscriptions.userId, user.id)).orderBy(desc(subscriptions.createdAt));
+        const sub = subs[0];
+        if (!sub) return res.status(404).json({ error: "No subscription found" });
         const { status } = req.body as {
             status: "draft" | "active" | "paused" | "archived";
         };
@@ -106,7 +114,7 @@ copilotsRouter.patch("/:id/status", async (req: Request, res: Response) => {
 
         // When a copilot is activated, trigger the daily send job
         if (status === "active") {
-            runDailySendJob().catch((err) =>
+            runDailySendJob(user.id, sub.id).catch((err) =>
                 console.error("Daily send job error:", err)
             );
         }

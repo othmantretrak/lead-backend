@@ -13,8 +13,6 @@ import {
     scrapeJobs,
 } from "../db/schema";
 import { eq } from "drizzle-orm";
-import { runDailySendJob, testSmtpConnection } from "../services/mailer";
-import { runScrapeJob } from "../services/scraper";
 
 export const integrationsRouter: Router = Router();
 

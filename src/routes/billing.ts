@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { db } from "../db/drizzle";
-import { subscriptions, invoices, users } from "../db/schema";
-import { eq, desc } from "drizzle-orm";
+import { subscriptions, invoices, users, usage, copilots, emailProfiles } from "../db/schema";
+import { eq, desc, and, lte, gte, ne, count } from "drizzle-orm";
 import createMollieClient, {
     MollieClient,
     SequenceType
@@ -100,10 +100,11 @@ billingRouter.get("/subscription", async (req: Request, res: Response) => {
 billingRouter.get("/invoices", async (req: Request, res: Response) => {
     try {
         const { userId } = getAuth(req)
+        console.log("User ID from auth:", userId);
         if (!userId) return res.status(401).json({ error: "User not found" });
 
         const user = await db.select().from(users).where(eq(users.clerkId, userId)).then(rows => rows[0]);
-
+        console.log("User from DB:", user);
 
         const rows = await db
             .select()
@@ -158,8 +159,8 @@ billingRouter.post("/subscribe", async (req: Request, res: Response) => {
             customerId: mollieCustomerId,
             sequenceType: SequenceType.first,
             description: `${plan.name} plan – first payment`,
-            redirectUrl: `${process.env.APP_URL}/billing/subscribe/return?planId=${planId}&userId=${user.id}`,
-            webhookUrl: `${process.env.APP_URL}/billing/webhook`,
+            redirectUrl: `${process.env.WEBHOOK_URL}/billing/subscribe/return?planId=${planId}&userId=${user.id}`,
+            webhookUrl: `${process.env.WEBHOOK_URL}/billing/webhook`,
             metadata: { planId, userId: String(user.id) },
         });
 
@@ -206,7 +207,7 @@ billingRouter.post("/subscribe", async (req: Request, res: Response) => {
 // GET /billing/subscribe/return
 billingRouter.get("/subscribe/return", (req: Request, res: Response) => {
     const { planId } = req.query as { planId?: string };
-    const frontendUrl = process.env.ALLOWED_ORIGIN ?? "http://localhost:3000";
+    const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:3000";
     res.redirect(`${frontendUrl}/dashboard/billing?plan=${planId ?? ""}&status=pending`);
 });
 
@@ -298,7 +299,7 @@ async function handleSuccessfulPayment(payment: any, userId: number, plan: any) 
                     amount: { currency: plan.currency, value: plan.amount },
                     interval: plan.interval,
                     description: `${plan.name} plan`,
-                    webhookUrl: `${process.env.ALLOWED_ORIGIN}/billing/webhook`,
+                    webhookUrl: `${process.env.WEBHOOK_URL}/billing/webhook`,
                     metadata: { planId: plan.id, userId: String(userId) },
                 });
 
@@ -321,6 +322,8 @@ async function handleSuccessfulPayment(payment: any, userId: number, plan: any) 
                 updatedAt: now,
             })
             .where(eq(subscriptions.userId, userId));
+        // === CREATE / ENSURE USAGE ROW FOR THIS PERIOD ===
+        await ensureUsageRecord(tx, userId, sub.id, now, periodEnd);
     });
 }
 
@@ -347,6 +350,47 @@ async function handleSubscriptionWebhook(subscriptionId: string) {
     } catch (err) {
         console.error(`Failed to fetch Mollie subscription ${subscriptionId}`, err);
     }
+}
+async function ensureUsageRecord(
+    tx: any,
+    userId: number,
+    subscriptionId: number,
+    periodStart: Date,
+    periodEnd: Date
+) {
+    // Check if usage record already exists for this period
+    const [existing] = await tx
+        .select()
+        .from(usage)
+        .where(
+            and(
+                eq(usage.userId, userId),
+                eq(usage.subscriptionId, subscriptionId),
+                eq(usage.periodStart, periodStart)
+            )
+        )
+        .limit(1);
+
+    if (existing) {
+        return existing;
+    }
+
+    // Create new usage record
+    const [newUsage] = await tx
+        .insert(usage)
+        .values({
+            userId,
+            subscriptionId,
+            periodStart,
+            periodEnd,
+            emailsSent: 0,
+            copilotsCreated: 0,
+            emailProfilesCreated: 0,
+        })
+        .returning();
+
+    console.log(`✅ Created new usage record for user ${userId}, period ${periodStart.toISOString()}`);
+    return newUsage;
 }
 
 // POST /billing/cancel
@@ -385,5 +429,141 @@ billingRouter.post("/cancel", async (req: Request, res: Response) => {
     } catch (err) {
         console.error("Cancel error:", err);
         res.status(500).json({ error: "Failed to cancel subscription" });
+    }
+});
+
+// ─── Plan Limits Map ───────────────────────────────────────────────────────────
+const PLAN_LIMITS: Record<PlanId, {
+    emailsPerMonth: number;
+    copilots: number;
+    emailProfiles: number;
+    hasApiAccess: boolean;
+    hasUnlimitedTemplates: boolean;
+}> = {
+    starter: {
+        emailsPerMonth: 500,
+        copilots: 3,
+        emailProfiles: 1,
+        hasApiAccess: false,
+        hasUnlimitedTemplates: false,
+    },
+    growth: {
+        emailsPerMonth: 5_000,
+        copilots: 15,
+        emailProfiles: 5,
+        hasApiAccess: true,
+        hasUnlimitedTemplates: true,
+    },
+    scale: {
+        emailsPerMonth: 25_000,
+        copilots: Infinity,
+        emailProfiles: 20,
+        hasApiAccess: true,
+        hasUnlimitedTemplates: true,
+    },
+};
+
+// GET /billing/limits
+billingRouter.get("/limits", async (req: Request, res: Response) => {
+    try {
+        const { userId } = getAuth(req);
+        if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+        const user = await db
+            .select()
+            .from(users)
+            .where(eq(users.clerkId, userId))
+            .then((rows) => rows[0]);
+
+        if (!user) return res.status(404).json({ error: "User not found" });
+
+        // ── 1. Active subscription ─────────────────────────────────────────────
+        const [sub] = await db
+            .select()
+            .from(subscriptions)
+            .where(eq(subscriptions.userId, user.id))
+            .orderBy(desc(subscriptions.createdAt))
+            .limit(1);
+
+        if (!sub || sub.status !== "active") {
+            return res.status(200).json({
+                hasActivePlan: false,
+                planId: null,
+                limits: null,
+                usage: null,
+            });
+        }
+
+        const planLimits = PLAN_LIMITS[sub.planId as PlanId];
+        if (!planLimits) return res.status(400).json({ error: "Unknown plan" });
+
+        // ── 2. Current period usage ────────────────────────────────────────────
+        const now = new Date();
+
+        const [currentUsage] = await db
+            .select()
+            .from(usage)
+            .where(
+                and(
+                    eq(usage.userId, user.id),
+                    eq(usage.subscriptionId, sub.id),
+                    lte(usage.periodStart, now),
+                    gte(usage.periodEnd, now),
+                )
+            )
+            .limit(1);
+
+        // ── 3. Count copilots + email profiles ────────────────────────────────
+        const [{ copilotsCount }] = await db
+            .select({ copilotsCount: count(copilots.id) })
+            .from(copilots)
+            .where(
+                and(
+                    eq(copilots.userId, user.id),
+                    ne(copilots.status, "archived")
+                )
+            );
+
+        const [{ emailProfilesCount }] = await db
+            .select({ emailProfilesCount: count(emailProfiles.id) })
+            .from(emailProfiles)
+            .where(eq(emailProfiles.userId, user.id));
+
+        // ── 4. Build response ──────────────────────────────────────────────────
+        const emailsSent = currentUsage?.emailsSent ?? 0;
+
+        res.json({
+            hasActivePlan: true,
+            planId: sub.planId,
+            periodStart: sub.currentPeriodStart,
+            periodEnd: sub.currentPeriodEnd,
+
+            limits: {
+                emailsPerMonth: planLimits.emailsPerMonth,
+                copilots: planLimits.copilots === Infinity ? null : planLimits.copilots, // null = unlimited
+                emailProfiles: planLimits.emailProfiles,
+                hasApiAccess: planLimits.hasApiAccess,
+                hasUnlimitedTemplates: planLimits.hasUnlimitedTemplates,
+            },
+
+            usage: {
+                emailsSent,
+                emailsRemaining: planLimits.emailsPerMonth === Infinity
+                    ? null
+                    : Math.max(0, planLimits.emailsPerMonth - emailsSent),
+                emailsPercent: Math.min(100, Math.round((emailsSent / planLimits.emailsPerMonth) * 100)),
+
+                copilotsCount,
+                copilotsRemaining: planLimits.copilots === Infinity
+                    ? null
+                    : Math.max(0, planLimits.copilots - copilotsCount),
+
+                emailProfilesCount,
+                emailProfilesRemaining: Math.max(0, planLimits.emailProfiles - emailProfilesCount),
+            },
+        });
+    } catch (err) {
+        console.error("Fetch limits error", err);
+        res.status(500).json({ error: "Failed to fetch limits" });
     }
 });

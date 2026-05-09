@@ -299,10 +299,15 @@ export const invoices = pgTable("invoices", {
 
 export const usage = pgTable("usage", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }),
-  month: varchar("month", { length: 7 }), // "2026-05"
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  subscriptionId: integer("subscription_id").references(() => subscriptions.id, { onDelete: "set null" }),
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
   emailsSent: integer("emails_sent").notNull().default(0),
-  createdAt: timestamp("created_at").defaultNow(),
+  // room to grow:
+  copilotsCreated: integer("copilots_created").notNull().default(0),
+  emailProfilesCreated: integer("email_profiles_created").notNull().default(0),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 // ─── Type exports ─────────────────────────────────────────────────────────────

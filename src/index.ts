@@ -16,7 +16,11 @@ import { scrapeProfilesRouter } from "./routes/scrape-profiles";
 import { runDailySendJob } from "./services/mailer";
 import { initScheduler, getSchedulerStatus } from "./services/scheduler";
 import { usersRouter } from "./routes/user";
-import { clerkMiddleware } from "@clerk/express";
+import { clerkMiddleware, getAuth } from "@clerk/express";
+import { subscriptions, users } from "./db/schema";
+import { eq } from "drizzle-orm/sql/expressions/conditions";
+import { db } from "./db/drizzle";
+import { desc } from "drizzle-orm/sql/expressions/select";
 
 
 const app: express.Application = express();
@@ -59,9 +63,25 @@ app.use("/scrape-profiles", requireApiKey, scrapeProfilesRouter);
 app.use("/users", usersRouter);
 
 // manual trigger for the daily send job (useful for testing without waiting for cron)
-app.post("/send-now", requireApiKey, async (_req, res) => {
+app.post("/send-now", requireApiKey, async (req, res) => {
+
+  const { userId } = getAuth(req)
+  if (!userId) return res.status(401).json({ error: "User not found" });
+
+  const user = await db.select().from(users).where(eq(users.clerkId, userId)).then(rows => rows[0]);
+
+
+  const [sub] = await db
+    .select()
+    .from(subscriptions)
+    .where(eq(subscriptions.userId, user.id))
+    .orderBy(desc(subscriptions.createdAt))
+    .limit(1);
+
+  if (!sub) return res.status(404).json({ error: "No subscription found" });
+
   try {
-    runDailySendJob().catch(console.error);
+    runDailySendJob(user.id, sub.id).catch(console.error);
     res.json({ message: "Send job triggered. Check server logs for progress." });
   } catch (error) {
     res.status(500).json({ error: "Failed to trigger send job" });
@@ -85,8 +105,16 @@ app.listen(PORT, async () => {
   console.log(`✅ API running on http://localhost:${PORT}`);
   console.log(`   Health check: http://localhost:${PORT}/health`);
 
-  // start cron jobs
-  await initScheduler();
+  // start cron jobs for all active subscriptions
+  const allSubscriptions = await db.select().from(subscriptions);
+
+  if (allSubscriptions.length === 0) {
+    console.log("⚠️  No subscriptions found. Scheduler not started.");
+  } else {
+    for (const sub of allSubscriptions) {
+      await initScheduler(sub.userId, sub.id);
+    }
+  }
 });
 
 export default app;

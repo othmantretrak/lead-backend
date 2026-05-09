@@ -35,7 +35,7 @@ async function runScrapeJob() {
   }
 }
 
-export async function initScheduler(): Promise<void> {
+export async function initScheduler(userId: number, subscriptionId: number): Promise<void> {
   console.log("⏰ Initialising scheduler...");
   stopAll();
 
@@ -46,7 +46,7 @@ export async function initScheduler(): Promise<void> {
   const sendCron = `0 ${sendHour} * * *`;
   state.sendJob = cron.schedule(sendCron, async () => {
     console.log(`\n📧 [${new Date().toISOString()}] Send job triggered`);
-    try { await runDailySendJob(); } catch (e) { console.error("❌ Send job error:", e); }
+    try { await runDailySendJob(userId, subscriptionId); } catch (e) { console.error("❌ Send job error:", e); }
   });
   console.log(`   ✅ Send job at ${sendHour}:00 daily`);
 
@@ -69,9 +69,9 @@ export async function initScheduler(): Promise<void> {
   console.log("⏰ Scheduler ready.\n");
 }
 
-export async function restartScheduler(): Promise<void> {
+export async function restartScheduler(userId: number, subscriptionId: number): Promise<void> {
   console.log("🔄 Restarting scheduler...");
-  await initScheduler();
+  await initScheduler(userId, subscriptionId);
 }
 
 export function getSchedulerStatus() {
