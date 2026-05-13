@@ -40,9 +40,9 @@ templatesRouter.put(
   validate(updateTemplateSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const updated = await templateService.updateTemplate(req.dbUser.id, Number(req.params.id), req.body);
+      const updated = await templateService.updateTemplate(Number(req.params.id), req.dbUser.id, req.body);
       res.json(updated);
-    } catch (err) { next(err); }
+    } catch (err) { console.error("Error:", err); next(err); }
   }
 );
 

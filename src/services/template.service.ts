@@ -29,11 +29,15 @@ export async function createTemplate(userId: number, data: CreateTemplateInput) 
 }
 
 export async function updateTemplate(id: number, userId: number, data: UpdateTemplateInput) {
+  console.log("Updating template", { id, userId, data });
   const [updated] = await db
     .update(emailTemplates)
     .set({ ...data, updatedAt: new Date() })
     .where(and(eq(emailTemplates.userId, userId), eq(emailTemplates.id, id)))
-    .returning();
+    .returning().catch(err => {
+      console.error("Database error during update:", err);
+      throw err;
+    });
   if (!updated) throw Object.assign(new Error("Template not found"), { statusCode: 404 });
   return updated;
 }
