@@ -1,6 +1,6 @@
 import cron from "node-cron";
-import { subscriptions, scrapeProfiles } from "../db/schema";
-import { desc, eq } from "drizzle-orm";
+import { subscriptions, scrapeProfiles, copilots, scrapeJobs } from "../db/schema";
+import { desc, eq, and } from "drizzle-orm";
 import { runDailySendJob } from "./mailer.service";
 import { runScrapeJob } from "./scraper.service";
 import { db } from "../db/drizzle";
@@ -10,12 +10,14 @@ interface SchedulerState {
   sendJob: cron.ScheduledTask | null;
   scrapeJobAM: cron.ScheduledTask | null;
   scrapeJobPM: cron.ScheduledTask | null;
+  copilotId: number | null;
 }
 
 const state: SchedulerState = {
   sendJob: null,
   scrapeJobAM: null,
   scrapeJobPM: null,
+  copilotId: null,
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -37,32 +39,49 @@ async function getActiveSubscription(userId: number) {
 }
 
 /**
- * Loads all scrape profiles for the user and runs each one sequentially.
- * Sequential rather than parallel to avoid spinning up multiple browsers
- * simultaneously against Google Maps.
+ * Gets the user's active copilot (most recently updated if multiple).
+ * Returns null if no active copilot exists.
  */
-async function runAllScrapeProfiles(userId: number): Promise<void> {
-  const profiles = await db
+async function getActiveCopilot(userId: number) {
+  const copilotList = await db
     .select()
-    .from(scrapeProfiles)
-    .where(eq(scrapeProfiles.userId, userId));
+    .from(copilots)
+    .where(and(
+      eq(copilots.userId, userId),
+      eq(copilots.status, "active")
+    ))
+    .orderBy(desc(copilots.updatedAt))
+    .limit(1);
 
-  if (profiles.length === 0) {
-    console.log(`📭 No scrape profiles found for user ${userId} — skipping`);
+  return copilotList[0] || null;
+}
+
+/**
+ * Runs the copilot's linked scrape profile.
+ */
+async function runCopilotScrapeProfile(copilotId: number): Promise<void> {
+  const [copilot] = await db
+    .select()
+    .from(copilots)
+    .where(eq(copilots.id, copilotId));
+
+  if (!copilot || !copilot.scrapeProfileId) {
+    console.log(`📭 No scrape profile linked to copilot ${copilotId} — skipping`);
     return;
   }
 
-  console.log(`🔍 Running ${profiles.length} scrape profile(s) for user ${userId}`);
+  const [profile] = await db
+    .select()
+    .from(scrapeProfiles)
+    .where(eq(scrapeProfiles.id, copilot.scrapeProfileId));
 
-  for (const profile of profiles) {
-    try {
-      console.log(`   ▶ Profile "${profile.name}" (query: "${profile.searchQuery}")`);
-      await runScrapeJob(profile);
-    } catch (err) {
-      // One failing profile must not abort the rest
-      console.error(`   ❌ Profile "${profile.name}" failed:`, err);
-    }
+  if (!profile) {
+    console.log(`📭 Scrape profile not found for copilot ${copilotId} — skipping`);
+    return;
   }
+
+  console.log(`🔍 Running scrape profile: "${profile.name}" (query: "${profile.searchQuery}")`);
+  await runScrapeJob(profile);
 }
 
 function stopAll() {
@@ -72,6 +91,7 @@ function stopAll() {
   state.sendJob = null;
   state.scrapeJobAM = null;
   state.scrapeJobPM = null;
+  state.copilotId = null;
 }
 
 function atHour(hour: string): string {
@@ -82,6 +102,7 @@ function atHour(hour: string): string {
 
 /**
  * Initialises cron jobs for a user.
+ * Requires active subscription. Uses the user's active copilot for scrape and send.
  *
  * Schedules are currently hardcoded defaults. Replace the constants with a
  * per-user DB lookup once you have a user-preferences table.
@@ -93,14 +114,34 @@ export async function initScheduler(userId: number): Promise<void> {
   console.log(`⏰ Initialising scheduler for user ${userId}...`);
   stopAll();
 
+  try {
+    await getActiveSubscription(userId);
+  } catch (e) {
+    console.log(`⚠️  No active subscription for user ${userId}. Scheduler not started.`);
+    return;
+  }
+
+  const copilot = await getActiveCopilot(userId);
+
+  if (!copilot) {
+    console.log(`⚠️  No active copilot for user ${userId}. Scheduler not started.`);
+    return;
+  }
+
+  state.copilotId = copilot.id;
+  console.log(`   📡 Using copilot: "${copilot.name}" (id: ${copilot.id})`);
+
   // ── Send job ────────────────────────────────────────────────────────────────
   const SEND_HOUR = "9";
 
   state.sendJob = cron.schedule(atHour(SEND_HOUR), async () => {
-    console.log(`\n📧 [${new Date().toISOString()}] Send job triggered for user ${userId}`);
+    console.log(`\n📧 [${new Date().toISOString()}] Send job triggered for copilot ${state.copilotId}`);
     try {
-      const sub = await getActiveSubscription(userId);
-      await runDailySendJob(userId, sub.id);
+      if (!state.copilotId) {
+        console.error("❌ No copilot configured");
+        return;
+      }
+      await runDailySendJob(state.copilotId);
     } catch (e) {
       console.error("❌ Send job error:", e);
     }
@@ -112,16 +153,24 @@ export async function initScheduler(userId: number): Promise<void> {
   const PM_HOUR = "14";
 
   state.scrapeJobAM = cron.schedule(atHour(AM_HOUR), async () => {
-    console.log(`\n🔍 [${new Date().toISOString()}] AM scrape triggered for user ${userId}`);
-    await runAllScrapeProfiles(userId).catch((e) =>
+    console.log(`\n🔍 [${new Date().toISOString()}] AM scrape triggered for copilot ${state.copilotId}`);
+    if (!state.copilotId) {
+      console.error("❌ No copilot configured");
+      return;
+    }
+    await runCopilotScrapeProfile(state.copilotId).catch((e) =>
       console.error("❌ AM scrape error:", e)
     );
   });
   console.log(`   ✅ AM scrape at ${AM_HOUR}:00 daily`);
 
   state.scrapeJobPM = cron.schedule(atHour(PM_HOUR), async () => {
-    console.log(`\n🔍 [${new Date().toISOString()}] PM scrape triggered for user ${userId}`);
-    await runAllScrapeProfiles(userId).catch((e) =>
+    console.log(`\n🔍 [${new Date().toISOString()}] PM scrape triggered for copilot ${state.copilotId}`);
+    if (!state.copilotId) {
+      console.error("❌ No copilot configured");
+      return;
+    }
+    await runCopilotScrapeProfile(state.copilotId).catch((e) =>
       console.error("❌ PM scrape error:", e)
     );
   });
@@ -140,5 +189,6 @@ export function getSchedulerStatus() {
     sendJob: { active: state.sendJob !== null },
     scrapeJobAM: { active: state.scrapeJobAM !== null },
     scrapeJobPM: { active: state.scrapeJobPM !== null },
+    copilotId: state.copilotId,
   };
 }

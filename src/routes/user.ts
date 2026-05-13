@@ -71,7 +71,6 @@ usersRouter.post("/", async (req: Request, res: Response) => {
             subject: "Quick question about {{companyName}}",
             body: `Hi,\n\nI came across {{companyName}} and wanted to reach out...\n\nBest,\n{{senderName}}`,
             category: "Cold Outreach",
-            isActive: true,
             variables: ["companyName", "senderName"],
         });
         res.status(201).json(created);

@@ -8,8 +8,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "ts-node src/db/seed.ts",
-    "db:generate": "drizzle-kit generate",
-    "auth:generate": "better-auth generate"
+    "db:generate": "drizzle-kit generate"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

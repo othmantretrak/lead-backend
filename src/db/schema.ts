@@ -26,7 +26,7 @@ export const templateCategoryEnum = pgEnum("template_category", [
   "Other",
 ]);
 
-export const copilotStatusEnum = pgEnum("copilot_status", ["draft", "active", "paused", "archived"]);
+export const copilotStatusEnum = pgEnum("copilot_status", ["draft", "active", "paused", "archived", "running"]);
 
 export const subscriptionStatusEnum = pgEnum("subscription_status", [
   "active",
@@ -104,7 +104,6 @@ export const emailTemplates = pgTable("email_templates", {
   subject: text("subject").notNull(),
   body: text("body").notNull(),
   category: templateCategoryEnum("category").notNull().default("Other"),
-  isActive: boolean("is_active").notNull().default(false),
   variables: jsonb("variables").$type<string[]>().notNull().default([]),
   usageCount: integer("usage_count").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -229,6 +228,9 @@ export const copilots = pgTable("copilots", {
   emailsSent: integer("emails_sent").notNull().default(0),
   emailsOpened: integer("emails_opened").notNull().default(0),
   emailsReplied: integer("emails_replied").notNull().default(0),
+  lastRunAt: timestamp("last_run_at"),
+  lastJobId: integer("last_job_id").references(() => scrapeJobs.id, { onDelete: "set null" }),
+  lastError: text("last_error"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

@@ -18,7 +18,7 @@ export async function getScrapeProfile(id: number, userId: number) {
     .select()
     .from(scrapeProfiles)
     .where(and(eq(scrapeProfiles.id, id), eq(scrapeProfiles.userId, userId)));
-  if (!row) throw Object.assign(new Error("Scrape profile not found"), { statusCode: 404 });
+  if (!row) throw Object.assign(new Error("Scrape profile not found getScrapeProfile"), { statusCode: 404 });
   return row;
 }
 
@@ -41,7 +41,7 @@ export async function updateScrapeProfile(
     .set({ ...data, updatedAt: new Date() })
     .where(and(eq(scrapeProfiles.id, id), eq(scrapeProfiles.userId, userId)))
     .returning();
-  if (!updated) throw Object.assign(new Error("Scrape profile not found"), { statusCode: 404 });
+  if (!updated) throw Object.assign(new Error("Scrape profile not found updateScrapeProfile"), { statusCode: 404 });
   return updated;
 }
 
@@ -58,7 +58,7 @@ export async function runScrapeProfileJob(id: number, userId: number) {
     .select()
     .from(scrapeProfiles)
     .where(and(eq(scrapeProfiles.id, id), eq(scrapeProfiles.userId, userId)));
-  if (!profile) throw Object.assign(new Error("Scrape profile not found"), { statusCode: 404 });
+  if (!profile) throw Object.assign(new Error("Scrape profile not found runScrapeProfileJob"), { statusCode: 404 });
 
   // Optimistically mark as running — respond to the HTTP request immediately
   await db

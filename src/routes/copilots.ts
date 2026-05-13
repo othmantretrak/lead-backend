@@ -76,3 +76,19 @@ copilotsRouter.patch(
         } catch (err) { next(err); }
     }
 );
+
+// POST /api/copilots/:id/run
+copilotsRouter.post("/:id/run", async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const result = await copilotService.runCopilot(Number(req.params.id), req.dbUser.id);
+        res.json(result);
+    } catch (err) { next(err); }
+});
+
+// GET /api/copilots/:id/status
+copilotsRouter.get("/:id/status", async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const status = await copilotService.getCopilotStatus(Number(req.params.id), req.dbUser.id);
+        res.json(status);
+    } catch (err) { next(err); }
+});

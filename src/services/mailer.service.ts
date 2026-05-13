@@ -1,9 +1,8 @@
 import nodemailer from "nodemailer";
-import { leads, emailTemplates, emailLogs, emailProfiles } from "../db/schema";
-import { eq, gte, and, count, inArray } from "drizzle-orm";
+import { leads, emailTemplates, emailLogs, emailProfiles, copilots } from "../db/schema";
+import { eq, gte, and, count, inArray, sql } from "drizzle-orm";
 import type { Lead, EmailTemplate } from "../db/types";
 import { db } from "../db/drizzle";
-import { incrementUsage } from "../lib/helpers";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface SmtpConfig {
@@ -17,6 +16,64 @@ interface SmtpConfig {
 export interface SendResult {
   success: boolean;
   error?: string;
+}
+
+// ─── SMTP helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Gets SMTP config from the copilot's linked email profile.
+ */
+async function getCopilotSmtpConfig(copilotId: number): Promise<SmtpConfig> {
+  const [copilot] = await db
+    .select()
+    .from(copilots)
+    .where(eq(copilots.id, copilotId));
+
+  if (!copilot || !copilot.emailProfileId) {
+    throw new Error("Copilot has no email profile configured.");
+  }
+
+  const [profile] = await db
+    .select()
+    .from(emailProfiles)
+    .where(eq(emailProfiles.id, copilot.emailProfileId));
+
+  if (!profile || !profile.smtpHost || !profile.email || !profile.smtpPass) {
+    throw new Error("Email profile not properly configured.");
+  }
+
+  return {
+    host: profile.smtpHost,
+    port: profile.smtpPort ?? 587,
+    email: profile.email,
+    pass: profile.smtpPass,
+    sendName: profile.sendName ?? profile.email,
+  };
+}
+
+/**
+ * Gets the template linked to the copilot.
+ */
+async function getCopilotTemplate(copilotId: number): Promise<EmailTemplate> {
+  const [copilot] = await db
+    .select()
+    .from(copilots)
+    .where(eq(copilots.id, copilotId));
+
+  if (!copilot || !copilot.templateId) {
+    throw new Error("Copilot has no template configured.");
+  }
+
+  const [template] = await db
+    .select()
+    .from(emailTemplates)
+    .where(eq(emailTemplates.id, copilot.templateId));
+
+  if (!template) {
+    throw new Error("Template not found.");
+  }
+
+return template;
 }
 
 // ─── SMTP helpers ─────────────────────────────────────────────────────────────
@@ -72,26 +129,26 @@ function createTransporter(config: SmtpConfig) {
   });
 }
 
-function interpolate(text: string, lead: Lead): string {
+function interpolate(text: string, lead: Lead, sendName: string): string {
   return text
     .replace(/{{companyName}}/g, lead.companyName ?? "")
     .replace(/{{email}}/g, lead.email ?? "")
     .replace(/{{website}}/g, lead.website ?? "")
-    .replace(/{{phone}}/g, lead.phone ?? "");
+    .replace(/{{phone}}/g, lead.phone ?? "")
+    .replace(/{{senderName}}/g, sendName);
 }
 
 // ─── Core send ────────────────────────────────────────────────────────────────
 async function sendEmail(
-  userId: number,
-  subscriptionId: number,
+  copilotId: number,
   lead: Lead,
   template: EmailTemplate
 ): Promise<SendResult> {
   try {
-    const config = await getGlobalSmtpConfig();
+    const config = await getCopilotSmtpConfig(copilotId);
     const transporter = createTransporter(config);
-    const subject = interpolate(template.subject ?? "", lead);
-    const body = interpolate(template.body ?? "", lead);
+    const subject = interpolate(template.subject ?? "", lead, config.sendName);
+    const body = interpolate(template.body ?? "", lead, config.sendName);
 
     await transporter.sendMail({
       from: `"${config.sendName}" <${config.email}>`,
@@ -110,7 +167,12 @@ async function sendEmail(
     await db.update(leads).set({ status: "sent", emailedAt: new Date() }).where(eq(leads.id, lead.id));
 
     console.log(`✅ Email sent to ${lead.email} (${lead.companyName})`);
-    await incrementUsage(userId, subscriptionId, { emailsSent: 1 });
+
+    await db
+      .update(copilots)
+      .set({ emailsSent: sql`${copilots.emailsSent} + 1` })
+      .where(eq(copilots.id, copilotId));
+
     return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -128,19 +190,26 @@ async function sendEmail(
 }
 
 // ─── Daily send job ───────────────────────────────────────────────────────────
-export async function runDailySendJob(userId: number, subscriptionId: number): Promise<void> {
+export async function runDailySendJob(copilotId: number): Promise<void> {
   console.log("📧 Daily send job started...");
 
-  const profile = await db.query.emailProfiles.findFirst({
-    where: eq(emailProfiles.status, "active"),
-  });
-
-  if (!profile) {
-    console.error("❌ No active email profile found.");
+  let template: EmailTemplate;
+  try {
+    template = await getCopilotTemplate(copilotId);
+  } catch (err) {
+    console.error("❌ No template configured for copilot.");
     return;
   }
 
-  const limit = profile.dailyLimit ?? 100;
+  let smtpConfig: SmtpConfig;
+  try {
+    smtpConfig = await getCopilotSmtpConfig(copilotId);
+  } catch (err) {
+    console.error("❌ No email profile configured for copilot.");
+    return;
+  }
+
+  const limit = smtpConfig ? 100 : 0;
 
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
@@ -158,14 +227,6 @@ export async function runDailySendJob(userId: number, subscriptionId: number): P
 
   console.log(`📬 Sending up to ${remaining} emails (${sentToday}/${limit} sent today)`);
 
-  const template = await db.query.emailTemplates.findFirst({
-    where: eq(emailTemplates.isActive, true),
-  });
-  if (!template) {
-    console.error("❌ No active email template found.");
-    return;
-  }
-
   const pendingLeads = await db.query.leads.findMany({
     where: eq(leads.status, "new"),
     orderBy: leads.scrapedAt,
@@ -177,7 +238,6 @@ export async function runDailySendJob(userId: number, subscriptionId: number): P
     return;
   }
 
-  // ✅ FIX: Only mark the leads we're about to send as queued — not ALL new leads
   const pendingIds = pendingLeads.map((l) => l.id);
   await db
     .update(leads)
@@ -190,7 +250,7 @@ export async function runDailySendJob(userId: number, subscriptionId: number): P
       console.log(`⏳ Waiting ${Math.round(delayMs / 1000)}s before next send...`);
       await sleep(delayMs);
     }
-    await sendEmail(userId, subscriptionId, pendingLeads[i], template);
+    await sendEmail(copilotId, pendingLeads[i], template);
   }
 
   console.log("✅ Daily send job complete.");
@@ -199,13 +259,11 @@ export async function runDailySendJob(userId: number, subscriptionId: number): P
 // ─── SMTP test ────────────────────────────────────────────────────────────────
 
 /**
- * Tests an SMTP connection. Accepts an explicit config (for per-profile verification)
- * or falls back to reading global settings.
+ * Tests an SMTP connection with an explicit config.
  */
-export async function testSmtpConnection(config?: SmtpConfig): Promise<SendResult> {
+export async function testSmtpConnection(config: SmtpConfig): Promise<SendResult> {
   try {
-    const resolved = config ?? (await getGlobalSmtpConfig());
-    const transporter = createTransporter(resolved);
+    const transporter = createTransporter(config);
     await transporter.verify();
     return { success: true };
   } catch (error) {

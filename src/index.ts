@@ -2,8 +2,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { clerkMiddleware } from "@clerk/express";
-import { eq } from "drizzle-orm";
-import { desc } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 import { requireAuth } from "./middleware/auth.middleware";
@@ -27,7 +26,7 @@ import { initScheduler, getSchedulerStatus } from "./services/scheduler.service"
 
 // ─── DB ───────────────────────────────────────────────────────────────────────
 import { db } from "./db/drizzle";
-import { subscriptions, users } from "./db/schema";
+import { subscriptions, users, copilots } from "./db/schema";
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 const app: express.Application = express();
@@ -86,14 +85,25 @@ app.post("/send-now", async (req, res, next) => {
       .orderBy(desc(subscriptions.createdAt))
       .limit(1);
 
-    if (!sub) {
-      res.status(404).json({ error: "No subscription found" });
+    if (!sub || sub.status !== "active") {
+      res.status(404).json({ error: "No active subscription found" });
       return;
     }
 
-    // Fire and forget — intentional; we don't want to hold the HTTP connection open
-    runDailySendJob(user.id, sub.id).catch(console.error);
-    res.json({ message: "Send job triggered. Check server logs for progress." });
+    const [copilot] = await db
+      .select()
+      .from(copilots)
+      .where(and(eq(copilots.userId, user.id), eq(copilots.status, "active")))
+      .orderBy(desc(copilots.updatedAt))
+      .limit(1);
+
+    if (!copilot) {
+      res.status(404).json({ error: "No active copilot found" });
+      return;
+    }
+
+    runDailySendJob(copilot.id).catch(console.error);
+    res.json({ message: "Send job triggered. Check server logs for progress.", copilotId: copilot.id });
   } catch (err) {
     next(err);
   }

@@ -12,7 +12,7 @@ export const createCopilotSchema = z.object({
 export const updateCopilotSchema = createCopilotSchema.partial();
 
 export const updateCopilotStatusSchema = z.object({
-  status: z.enum(["draft", "active", "paused", "archived"]),
+  status: z.enum(["draft", "active", "paused", "archived", "running"]),
 });
 
 export type CreateCopilotInput = z.infer<typeof createCopilotSchema>;

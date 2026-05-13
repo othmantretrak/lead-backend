@@ -4,7 +4,7 @@ import { Browser, Page } from "playwright";
 import { leads, scrapeJobs, scrapeProfiles } from "../db/schema";
 import { eq, desc, count } from "drizzle-orm";
 import { db } from "../db/drizzle";
-import type { ScrapeProfile } from "../db/schema";
+import type { ScrapeProfile, ScrapeJob } from "../db/schema";
 import type { TriggerScrapeInput, ListJobsInput } from "../validators/scraper.validator";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -234,7 +234,7 @@ async function scrapeGoogleMaps(
 export async function runScrapeJob(
   profile: ScrapeProfile,
   adHocQuery?: string
-): Promise<void> {
+): Promise<ScrapeJob> {
   const query = adHocQuery ?? profile.searchQuery;
   const limit = profile.resultsPerRun ?? DEFAULT_RESULTS_LIMIT;
 
@@ -328,6 +328,8 @@ export async function runScrapeJob(
   } finally {
     await browser?.close();
   }
+
+  return job;
 }
 
 // ─── Public API (used by routes) ─────────────────────────────────────────────

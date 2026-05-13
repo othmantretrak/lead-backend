@@ -39,16 +39,9 @@ export async function updateTemplate(id: number, userId: number, data: UpdateTem
 }
 
 export async function patchTemplate(id: number, userId: number, data: PatchTemplateInput) {
-  // If we're activating this template, deactivate all others first
-  if (data.isActive === true) {
-    await db.update(emailTemplates).set({ isActive: false });
-  }
-
-  const updateData: Record<string, unknown> = { ...data, updatedAt: new Date() };
-
   const [updated] = await db
     .update(emailTemplates)
-    .set(updateData)
+    .set({ ...data, updatedAt: new Date() })
     .where(and(eq(emailTemplates.userId, userId), eq(emailTemplates.id, id)))
     .returning();
   if (!updated) throw Object.assign(new Error("Template not found"), { statusCode: 404 });
@@ -69,7 +62,7 @@ export async function duplicateTemplate(id: number, userId: number) {
   const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = original;
   const [duplicate] = await db
     .insert(emailTemplates)
-    .values({ ...rest, name: `${original.name} (Copy)`, isActive: false, userId })
+    .values({ ...rest, name: `${original.name} (Copy)`, userId })
     .returning();
   return duplicate;
 }
