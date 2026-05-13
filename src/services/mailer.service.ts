@@ -1,6 +1,6 @@
 import nodemailer from "nodemailer";
 import { leads, emailTemplates, emailLogs, emailProfiles, copilots } from "../db/schema";
-import { eq, gte, and, count, inArray, sql } from "drizzle-orm";
+import { eq, gte, and, count, inArray, sql, or } from "drizzle-orm";
 import type { Lead, EmailTemplate } from "../db/types";
 import { db } from "../db/drizzle";
 
@@ -228,7 +228,7 @@ export async function runDailySendJob(copilotId: number): Promise<void> {
   console.log(`📬 Sending up to ${remaining} emails (${sentToday}/${limit} sent today)`);
 
   const pendingLeads = await db.query.leads.findMany({
-    where: eq(leads.status, "new"),
+    where: or(eq(leads.status, "new"), eq(leads.status, "queued")),
     orderBy: leads.scrapedAt,
     limit: remaining,
   });
@@ -245,12 +245,28 @@ export async function runDailySendJob(copilotId: number): Promise<void> {
     .where(inArray(leads.id, pendingIds));
 
   for (let i = 0; i < pendingLeads.length; i++) {
+    const lead = pendingLeads[i];
+
+    const alreadySent = await db.query.emailLogs.findFirst({
+      where: and(
+        eq(emailLogs.leadId, lead.id),
+        eq(emailLogs.status, "sent"),
+        gte(emailLogs.sentAt, startOfDay)
+      ),
+    });
+
+    if (alreadySent) {
+      console.log(`⏭️  Lead ${lead.id} already sent today — marking as "sent"`);
+      await db.update(leads).set({ status: "sent" }).where(eq(leads.id, lead.id));
+      continue;
+    }
+
     if (i > 0) {
       const delayMs = randomBetween(2 * 60 * 1000, 5 * 60 * 1000);
       console.log(`⏳ Waiting ${Math.round(delayMs / 1000)}s before next send...`);
       await sleep(delayMs);
     }
-    await sendEmail(copilotId, pendingLeads[i], template);
+    await sendEmail(copilotId, lead, template);
   }
 
   console.log("✅ Daily send job complete.");
