@@ -107,6 +107,44 @@ export async function deleteCopilot(id: number, userId: number) {
   await db.delete(copilots).where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
 }
 
+export async function duplicateCopilot(id: number, userId: number) {
+  const [original] = await db
+    .select()
+    .from(copilots)
+    .where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
+
+  if (!original) {
+    throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
+  }
+
+  const sub = await getActiveSubscription(userId);
+
+  const newName = original.name.length > 140
+    ? "Copy of " + original.name.substring(0, 140)
+    : "Copy of " + original.name;
+
+  const [created] = await db
+    .insert(copilots)
+    .values({
+      userId,
+      name: newName,
+      description: original.description,
+      status: "draft",
+      emailProfileId: original.emailProfileId,
+      scrapeProfileId: original.scrapeProfileId,
+      templateId: original.templateId,
+      settings: original.settings,
+      emailsSent: 0,
+      emailsOpened: 0,
+      emailsReplied: 0,
+    })
+    .returning();
+
+  await incrementUsage(userId, sub.id, { copilotsCreated: 1 });
+
+  return created;
+}
+
 export async function updateCopilotStatus(
   id: number,
   userId: number,

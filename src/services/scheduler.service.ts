@@ -132,7 +132,7 @@ export async function initScheduler(userId: number): Promise<void> {
   console.log(`   📡 Using copilot: "${copilot.name}" (id: ${copilot.id})`);
 
   // ── Send job ────────────────────────────────────────────────────────────────
-  const SEND_HOUR = "14";
+  const SEND_HOUR = "9";
 
   state.sendJob = cron.schedule(atHour(SEND_HOUR), async () => {
     console.log(`\n📧 [${new Date().toISOString()}] Send job triggered for copilot ${state.copilotId}`);

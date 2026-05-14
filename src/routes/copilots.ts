@@ -92,3 +92,11 @@ copilotsRouter.get("/:id/status", async (req: Request, res: Response, next: Next
         res.json(status);
     } catch (err) { next(err); }
 });
+
+// POST /api/copilots/:id/duplicate
+copilotsRouter.post("/:id/duplicate", async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const created = await copilotService.duplicateCopilot(Number(req.params.id), req.dbUser.id);
+        res.status(201).json(created);
+    } catch (err) { next(err); }
+});
