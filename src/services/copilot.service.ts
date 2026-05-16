@@ -159,10 +159,6 @@ export async function updateCopilotStatus(
 
   if (data.status === "active") {
     await validateCopilotCanActivate(id);
-
-    runDailySendJob(id).catch((err) =>
-      console.error("Daily send job error:", err)
-    );
   }
 
   return updated;
@@ -178,7 +174,7 @@ export async function runCopilot(id: number, userId: number) {
     throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
   }
 
-  console.log(`🚀 Triggering copilot ${id} for user ${userId}`);
+  console.log(` ${new Date().toLocaleTimeString()} - 🚀 Triggering copilot ${id} for user ${userId}`);
 
   await db
     .update(copilots)
@@ -196,38 +192,40 @@ export async function runCopilot(id: number, userId: number) {
       .from(scrapeProfiles)
       .where(eq(scrapeProfiles.id, copilot.scrapeProfileId));
     if (profile) {
-      console.log(`🔍 Starting scrape job for copilot ${id}`);
-      runScrapeJob(profile)
+      console.log(` ${new Date().toLocaleTimeString()} - 🔍 Starting scrape job for copilot ${id}`);
+      runScrapeJob(profile, undefined, copilot.sendLimit)
         .then((scrapeJob) => {
-          console.log(`📋 Scrape job ${scrapeJob.id} completed for copilot ${id}`);
+          console.log(` ${new Date().toLocaleTimeString()} - 📋 Scrape job ${scrapeJob.id} completed for copilot ${id}`);
           db.update(copilots)
             .set({ lastJobId: scrapeJob.id, updatedAt: new Date() })
             .where(eq(copilots.id, id))
             .catch(console.error);
+
+          console.log(` ${new Date().toLocaleTimeString()} - 📧 Starting email job for copilot ${id}`);
+          runDailySendJob(id)
+            .then(() => {
+              console.log(` ${new Date().toLocaleTimeString()} - ✅ Email job completed for copilot ${id}`);
+              updateCopilotStatus(id, userId, { status: "active" }).catch(console.error);
+            })
+            .catch((err) => {
+              console.error(` ${new Date().toLocaleTimeString()} - ❌ Email job failed for copilot ${id}:`, err);
+              db.update(copilots)
+                .set({ status: "paused", lastError: "Email job failed: " + err.message, updatedAt: new Date() })
+                .where(eq(copilots.id, id))
+                .catch(console.error);
+            });
         })
         .catch((err) => {
-          console.error(`❌ Scrape job failed for copilot ${id}:`, err);
+          console.error(` ${new Date().toLocaleTimeString()} - ❌ Scrape job failed for copilot ${id}:`, err);
           db.update(copilots)
             .set({ status: "paused", lastError: "Scrape job failed: " + err.message, updatedAt: new Date() })
             .where(eq(copilots.id, id))
             .catch(console.error);
-        });
+        })
     }
   }
 
-  console.log(`📧 Starting email job for copilot ${id}`);
-  runDailySendJob(id)
-    .then(() => {
-      console.log(`✅ Email job completed for copilot ${id}`);
-      updateCopilotStatus(id, userId, { status: "active" }).catch(console.error);
-    })
-    .catch((err) => {
-      console.error(`❌ Email job failed for copilot ${id}:`, err);
-      db.update(copilots)
-        .set({ status: "paused", lastError: "Email job failed: " + err.message, updatedAt: new Date() })
-        .where(eq(copilots.id, id))
-        .catch(console.error);
-    });
+
 
   return {
     message: "Copilot triggered successfully",
@@ -293,13 +291,13 @@ export async function getCopilotStatus(id: number, userId: number) {
     newLeadsCount: Number(newLeadsCount[0]?.count ?? 0),
     scrapeJob: scrapeJob
       ? {
-          id: scrapeJob.id,
-          status: scrapeJob.status,
-          leadsFound: scrapeJob.leadsFound,
-          errorMessage: scrapeJob.errorMessage,
-          createdAt: scrapeJob.createdAt,
-          finishedAt: scrapeJob.finishedAt,
-        }
+        id: scrapeJob.id,
+        status: scrapeJob.status,
+        leadsFound: scrapeJob.leadsFound,
+        errorMessage: scrapeJob.errorMessage,
+        createdAt: scrapeJob.createdAt,
+        finishedAt: scrapeJob.finishedAt,
+      }
       : null,
     emailStats,
   };

@@ -209,7 +209,8 @@ export async function runDailySendJob(copilotId: number): Promise<void> {
     return;
   }
 
-  const limit = smtpConfig ? 100 : 0;
+  const [copilot] = await db.select().from(copilots).where(eq(copilots.id, copilotId));
+  const limit = copilot?.sendLimit ?? 0;
 
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);

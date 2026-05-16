@@ -86,7 +86,6 @@ export const emailProfiles = pgTable("email_profiles", {
   smtpPort: integer("smtp_port").default(587),
   smtpPass: text("smtp_pass"), // store encrypted in practice
   status: emailProfileStatusEnum("status").notNull().default("inactive"),
-  dailyLimit: integer("daily_limit").notNull().default(100),
   sentToday: integer("sent_today").notNull().default(0),
   lastVerifiedAt: timestamp("last_verified_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -122,8 +121,6 @@ export const scrapeProfiles = pgTable("scrape_profiles", {
   name: varchar("name", { length: 100 }).notNull(),
   // ✅ Widened from 100 → 500: real search queries ("plumbers in Amsterdam near city centre") easily exceed 100 chars
   searchQuery: varchar("search_query", { length: 500 }).notNull(),
-  resultsPerRun: integer("results_per_run").notNull().default(100),
-  schedule: varchar("schedule", { length: 100 }), // cron expression
   status: scrapeStatusEnum("status").notNull().default("idle"),
   resultsCount: integer("results_count").notNull().default(0),
   lastRun: timestamp("last_run"),
@@ -214,6 +211,7 @@ export const copilots = pgTable("copilots", {
     .references(() => users.id, { onDelete: "cascade" }),
   name: varchar("name", { length: 150 }).notNull(),
   description: text("description"),
+  sendLimit: integer("send_limit").notNull().default(100),
   status: copilotStatusEnum("status").notNull().default("draft"),
   emailProfileId: integer("email_profile_id").references(() => emailProfiles.id, {
     onDelete: "set null",

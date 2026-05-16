@@ -233,10 +233,11 @@ async function scrapeGoogleMaps(
  */
 export async function runScrapeJob(
   profile: ScrapeProfile,
-  adHocQuery?: string
+  adHocQuery?: string,
+  sendLimit?: number
 ): Promise<ScrapeJob> {
   const query = adHocQuery ?? profile.searchQuery;
-  const limit = profile.resultsPerRun ?? DEFAULT_RESULTS_LIMIT;
+  const limit = sendLimit ?? DEFAULT_RESULTS_LIMIT;
 
   console.log(`🔍 Scrape job — profile: "${profile.name}", query: "${query}", limit: ${limit}`);
 
