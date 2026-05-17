@@ -23,7 +23,7 @@ const PLANS = [
         amount: "9.00",
         interval: "1 month",
         currency: "EUR",
-        features: ["3 Copilots", "1 Email Profile", "500 emails/mo", "Basic templates", "Email support"],
+        features: ["1 Copilots", "1 SMTP account", "250 emails (~8/day)", "Standard delivery speed", "No data export"],
     },
     {
         id: "growth",
@@ -33,7 +33,7 @@ const PLANS = [
         interval: "1 month",
         currency: "EUR",
         highlight: true,
-        features: ["15 Copilots", "5 Email Profiles", "5,000 emails/mo", "Unlimited templates", "Priority support", "API access"],
+        features: ["3 Copilots", "3 SMTP accounts", "750 emails (~26/day)", "Faster delivery speed", "Limited data export"],
     },
     {
         id: "scale",
@@ -42,7 +42,7 @@ const PLANS = [
         amount: "39.00",
         interval: "1 month",
         currency: "EUR",
-        features: ["Unlimited Copilots", "20 Email Profiles", "25,000 emails/mo", "Custom templates", "Dedicated support", "API access", "Team seats"],
+        features: ["Unlimited Copilots", "Unlimited SMTP accounts", "2000 emails (~65/day)", "Priority delivery speed", "Full data export"],
     },
 ] as const;
 
@@ -60,9 +60,9 @@ const PLAN_LIMITS: Record<PlanId, {
     hasApiAccess: boolean;
     hasUnlimitedTemplates: boolean;
 }> = {
-    starter: { emailsPerMonth: 500, copilots: 3, emailProfiles: 1, hasApiAccess: false, hasUnlimitedTemplates: false },
-    growth: { emailsPerMonth: 5_000, copilots: 15, emailProfiles: 5, hasApiAccess: true, hasUnlimitedTemplates: true },
-    scale: { emailsPerMonth: 25_000, copilots: Infinity, emailProfiles: 20, hasApiAccess: true, hasUnlimitedTemplates: true },
+    starter: { emailsPerMonth: 250, copilots: 1, emailProfiles: 1, hasApiAccess: false, hasUnlimitedTemplates: false },
+    growth: { emailsPerMonth: 750, copilots: 3, emailProfiles: 3, hasApiAccess: true, hasUnlimitedTemplates: true },
+    scale: { emailsPerMonth: 2000, copilots: Infinity, emailProfiles: Infinity, hasApiAccess: true, hasUnlimitedTemplates: true },
 };
 
 // ─── Status mapping ────────────────────────────────────────────────────────────
