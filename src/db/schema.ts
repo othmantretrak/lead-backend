@@ -50,6 +50,7 @@ export const leadStatusEnum = pgEnum("lead_status", [
   "replied",
   "disqualified",
   "unsubscribed",
+  "pending_email",
 ]);
 
 export const emailLogStatusEnum = pgEnum("email_log_status", ["sent", "failed", "opened", "replied"]);
@@ -153,7 +154,7 @@ export const leads = pgTable("leads", {
   userId: integer("user_id")
     .references(() => users.id, { onDelete: "set null" }),
   companyName: varchar("company_name", { length: 255 }).notNull(),
-  email: varchar("email", { length: 255 }).notNull().unique(),
+  email: varchar("email", { length: 255 }).unique(),
   website: text("website").unique(),
   phone: varchar("phone", { length: 50 }),
   address: text("address"),

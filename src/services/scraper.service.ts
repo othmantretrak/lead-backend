@@ -19,6 +19,7 @@ interface ScrapedLead {
 // ─── Config ───────────────────────────────────────────────────────────────────
 const SCRAPE_TIMEOUT = 45_000;
 const DEFAULT_RESULTS_LIMIT = 10;
+const RESULTS_PER_BATCH = 10;
 const IS_PROD = process.env.NODE_ENV === "production";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -137,13 +138,52 @@ async function findEmailOnWebsite(page: Page, website: string): Promise<string |
 
 // ─── Google Maps scraper ──────────────────────────────────────────────────────
 async function scrapeGoogleMaps(
-  page: Page,
+  browser: Browser,
   query: string,
   limit: number,
-  userId: number
-): Promise<Omit<ScrapedLead, "email">[]> {
+  userId: number,
+  profileId: number,
+  jobId: number
+): Promise<number> {
+  const existingLeads = await db
+    .select({ companyName: leads.companyName })
+    .from(leads)
+    .where(eq(leads.scrapeJobId, jobId));
+
+  const seen = new Set(existingLeads.map((l) => l.companyName));
+  console.log(`📋 Starting with ${seen.size} already saved leads for this job`);
+
+  let totalProcessed = seen.size;
+  let page: Page | null = null;
+  let batchCount = 0;
+
+  while (totalProcessed < limit) {
+    console.log(`🔄 Starting batch ${batchCount + 1}...`);
+    if (page) await page.close().catch(() => {});
+
+    page = await newStealthPage(browser);
+    await initPage(page, query);
+    batchCount++;
+
+    const batchProcessed = await processBatch(page, seen, limit, userId, profileId, jobId, query);
+
+    totalProcessed += batchProcessed;
+
+    if (batchProcessed === 0) {
+      console.log("No more new results found.");
+      break;
+    }
+
+    await randomDelay(4000, 7000);
+  }
+
+  await page?.close().catch(() => {});
+  return totalProcessed;
+}
+
+async function initPage(page: Page, query: string) {
   const searchUrl = `https://www.google.com/maps/search/${encodeURIComponent(query)}`;
-  console.log(`🗺️  Searching Google Maps: "${query}", Limit: ${limit}`);
+  console.log(`🗺️  Searching Google Maps: "${query}"`);
   await page.goto(searchUrl, { timeout: SCRAPE_TIMEOUT, waitUntil: "networkidle" });
   await randomDelay(3000, 5000);
 
@@ -163,37 +203,45 @@ async function scrapeGoogleMaps(
       }
     } catch { }
   }
+}
 
-  const results: Omit<ScrapedLead, "email">[] = [];
-  const seen = new Set<string>();
+async function processBatch(
+  page: Page,
+  seen: Set<string>,
+  limit: number,
+  userId: number,
+  profileId: number,
+  jobId: number,
+  query: string
+): Promise<number> {
   const resultsPanel = page.locator('[role="feed"]').first();
+  let processed = 0;
 
-  for (let attempt = 0; attempt < 10 && results.length < limit; attempt++) {
-    await resultsPanel.evaluate((el) => el.scrollBy(0, 900)).catch(() => { });
-    await randomDelay(1800, 3200);
+  for (let attempt = 0; attempt < 8 && seen.size < limit; attempt++) {
+    await resultsPanel.evaluate((el) => el.scrollBy(0, 1000)).catch(() => {});
+    await randomDelay(2200, 3800);
 
-    if (Math.random() > 0.6) {
+    if (Math.random() > 0.7) {
       await page.mouse
         .move(500 + Math.random() * 300, 300 + Math.random() * 400, { steps: 10 })
         .catch(() => {});
     }
 
-    const cards = await page.locator('[role="feed"] > div').all();
+    const cards = await page.locator('[role="feed"] > div').all().catch(() => []);
 
     for (const card of cards) {
-      if (results.length >= limit) break;
+      if (seen.size >= limit) break;
+
       try {
         const nameEl = card.locator("a[aria-label]").first();
         const name = (await nameEl.getAttribute("aria-label"))?.trim();
+
         if (!name || seen.has(name)) continue;
 
         const alreadyExists = await db.query.leads.findFirst({
           where: and(eq(leads.companyName, name), eq(leads.userId, userId)),
         });
-        if (alreadyExists) {
-          console.log(`⏭️ Skipped (already exists): ${name}`);
-          continue;
-        }
+        if (alreadyExists) continue;
 
         await nameEl.click();
         await randomDelay(4500, 7000);
@@ -212,29 +260,32 @@ async function scrapeGoogleMaps(
           .catch(() => null);
 
         seen.add(name);
-        results.push({
-          companyName: name,
-          website: website?.trim() || undefined,
-          phone: phone?.trim() || undefined,
-          address: address?.trim() || undefined,
-        });
-        console.log(`📌 Found: ${name} ${website ? `(${website})` : "(no website)"}`);
+        processed++;
+
+        try {
+          await db.insert(leads).values({
+            userId,
+            companyName: name,
+            email: null,
+            website: website?.trim() || null,
+            phone: phone?.trim() || null,
+            address: address?.trim() || null,
+            sourceQuery: query,
+            scrapeProfileId: profileId,
+            scrapeJobId: jobId,
+            status: "pending_email",
+          });
+          console.log(`📌 Saved: ${name} ${website ? `(${website})` : "(no website)"}`);
+        } catch (err) {
+          console.warn(`Failed to save ${name}:`, err instanceof Error ? err.message : "Unknown error");
+        }
       } catch {
         continue;
       }
     }
   }
 
-  if (results.length === 0 && !IS_PROD) {
-    const timestamp = Date.now();
-    const fs = await import("fs");
-    fs.mkdirSync("/app/debug", { recursive: true });
-    await page.screenshot({ path: `/app/debug/maps-${timestamp}.png`, fullPage: true });
-    fs.writeFileSync(`/app/debug/maps-${timestamp}.html`, await page.content());
-    console.log(`📸 Debug artifacts saved: maps-${timestamp}`);
-  }
-
-  return results;
+  return processed;
 }
 
 // ─── Core job ─────────────────────────────────────────────────────────────────
@@ -271,51 +322,48 @@ export async function runScrapeJob(
 
   try {
     browser = await launchBrowser();
-    const page = await newStealthPage(browser);
-    const listings = await scrapeGoogleMaps(page, query, limit, profile.userId);
-    console.log(`📋 Found ${listings.length} listings, extracting emails...`);
+    const foundCount = await scrapeGoogleMaps(browser, query, limit, profile.userId, profile.id, job.id);
+    console.log(`📋 Found ${foundCount} listings, extracting emails...`);
 
-    for (const listing of listings) {
-      const alreadyExists = listing.website
-        ? await db.query.leads.findFirst({ where: and(eq(leads.website, listing.website), eq(leads.userId, profile.userId)) })
-        : null;
-      if (alreadyExists) {
-        console.log(`⏭️  Skipping ${listing.companyName} — website already in DB`);
+    const page = await newStealthPage(browser);
+
+    const pendingLeads = await db.query.leads.findMany({
+      where: and(eq(leads.scrapeJobId, job.id), eq(leads.status, "pending_email")),
+      orderBy: desc(leads.scrapedAt),
+    });
+
+    for (const lead of pendingLeads) {
+      if (!lead.website) {
+        await db.update(leads).set({ status: "failed" }).where(eq(leads.id, lead.id));
+        console.log(`⚠️  No website for ${lead.companyName} — skipping`);
         continue;
       }
 
-      let email: string | null = null;
-      if (listing.website) {
-        console.log(`🌐 Checking website for email: ${listing.website}`);
-        email = await findEmailOnWebsite(page, listing.website);
-      }
+      console.log(`🌐 Checking website for email: ${lead.website}`);
+      const email = await findEmailOnWebsite(page, lead.website);
 
       if (!email) {
-        console.log(`⚠️  No email found for ${listing.companyName} — skipping`);
+        await db.update(leads).set({ status: "failed" }).where(eq(leads.id, lead.id));
+        console.log(`⚠️  No email found for ${lead.companyName}`);
         continue;
       }
 
-      const emailExists = await db.query.leads.findFirst({ where: eq(leads.email, email) });
+      const emailExists = await db.query.leads.findFirst({
+        where: and(eq(leads.email, email), eq(leads.userId, profile.userId)),
+      });
       if (emailExists) {
+        await db.update(leads).set({ status: "failed" }).where(eq(leads.id, lead.id));
         console.log(`⏭️  Email ${email} already in DB — skipping`);
         continue;
       }
 
-      await db.insert(leads).values({
-        userId: profile.userId,      // ✅ leads are owned by the user who ran the profile
-        companyName: listing.companyName,
-        email,
-        website: listing.website,
-        phone: listing.phone,
-        address: listing.address,
-        sourceQuery: query,
-        scrapeProfileId: profile.id, // ✅ direct FK — no join needed to filter by profile
-        scrapeJobId: job.id,
-        status: "new",
-      });
+      await db
+        .update(leads)
+        .set({ email, status: "new" })
+        .where(eq(leads.id, lead.id));
 
       newLeadsCount++;
-      console.log(`✅ Saved: ${listing.companyName} <${email}>`);
+      console.log(`✅ Saved: ${lead.companyName} <${email}>`);
       await randomDelay(1500, 3000);
     }
 
