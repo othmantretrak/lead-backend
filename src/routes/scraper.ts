@@ -11,7 +11,7 @@ scraperRouter.get(
   validate(listJobsSchema, "query"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.json(await scraperService.listScrapeJobs(req.query as any));
+      res.json(await scraperService.listScrapeJobs(req.query as any, req.dbUser.id));
     } catch (err) { next(err); }
   }
 );
@@ -19,6 +19,6 @@ scraperRouter.get(
 // GET /scraper/jobs/:id
 scraperRouter.get("/jobs/:id", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    res.json(await scraperService.getScrapeJob(parseInt(req.params.id)));
+    res.json(await scraperService.getScrapeJob(parseInt(req.params.id), req.dbUser.id));
   } catch (err) { next(err); }
 });

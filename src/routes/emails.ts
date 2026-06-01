@@ -2,7 +2,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import { validate } from "../middleware/validate.middleware";
 import { db } from "../db/drizzle";
 import { emailLogs } from "../db/schema";
-import { desc } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 export const emailsRouter: Router = Router();
@@ -21,8 +21,11 @@ emailsRouter.get(
       const { page, limit } = req.query as any;
       const offset = (page - 1) * limit;
 
+      const where = eq(emailLogs.usersId, req.dbUser.id);
+
       const [rows, total] = await Promise.all([
         db.query.emailLogs.findMany({
+          where,
           orderBy: desc(emailLogs.sentAt),
           limit,
           offset,
@@ -31,7 +34,7 @@ emailsRouter.get(
             template: { columns: { id: true, name: true } },
           },
         }),
-        db.$count(emailLogs),
+        db.$count(emailLogs, where),
       ]);
 
       res.json({

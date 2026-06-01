@@ -2,7 +2,7 @@ import { chromium as playwrightChromium } from "playwright-extra";
 import stealth from "puppeteer-extra-plugin-stealth";
 import { Browser, Page } from "playwright";
 import { leads, scrapeJobs, scrapeProfiles } from "../db/schema";
-import { eq, desc, count, and } from "drizzle-orm";
+import { eq, and, desc, count } from "drizzle-orm";
 import { db } from "../db/drizzle";
 import type { ScrapeProfile, ScrapeJob } from "../db/schema";
 import type { ListJobsInput } from "../validators/scraper.validator";
@@ -557,23 +557,25 @@ export async function runScrapeJob(
 
 // ─── Public API (used by routes) ─────────────────────────────────────────────
 
-export async function listScrapeJobs({ page, limit }: ListJobsInput) {
+export async function listScrapeJobs({ page, limit }: ListJobsInput, userId: number) {
   const offset = (page - 1) * limit;
+  const where = eq(scrapeJobs.userId, userId);
   const [jobs, [{ total }]] = await Promise.all([
     db.query.scrapeJobs.findMany({
+      where,
       orderBy: desc(scrapeJobs.createdAt),
       limit,
       offset,
       with: { leads: { columns: { id: true } } },
     }),
-    db.select({ total: count() }).from(scrapeJobs),
+    db.select({ total: count() }).from(scrapeJobs).where(where),
   ]);
   return { data: jobs, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
 }
 
-export async function getScrapeJob(id: number) {
+export async function getScrapeJob(id: number, userId: number) {
   const job = await db.query.scrapeJobs.findFirst({
-    where: eq(scrapeJobs.id, id),
+    where: and(eq(scrapeJobs.id, id), eq(scrapeJobs.userId, userId)),
     with: { leads: true },
   });
   if (!job) throw Object.assign(new Error("Job not found"), { statusCode: 404 });

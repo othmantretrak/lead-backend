@@ -1,6 +1,6 @@
 import { db } from "../db/drizzle";
 import { copilots, subscriptions, scrapeProfiles, emailProfiles, emailTemplates, scrapeJobs, emailLogs, leads } from "../db/schema";
-import { and, desc, eq, gte, count } from "drizzle-orm";
+import { and, desc, eq, gte, count, ne } from "drizzle-orm";
 import { sendPendingLeads } from "./mailer.service";
 import { runScrapeJob } from "./scraper.service";
 import { incrementUsage } from "../lib/helpers";
@@ -9,6 +9,36 @@ import type {
   UpdateCopilotInput,
   UpdateCopilotStatusInput,
 } from "../validators/copilot.validator";
+
+// ─── Global run queue ─────────────────────────────────────────────────────────
+// Ensures only one copilot runs at a time across all users.
+// Same copilot triggered while "running" → rejected.
+// Different copilot triggered while busy → queued (auto-starts when current finishes).
+
+interface QueueItem {
+  copilotId: number;
+  userId: number;
+  resolve: (value: unknown) => void;
+  reject: (reason: unknown) => void;
+}
+
+const runQueue: QueueItem[] = [];
+let isRunning = false;
+
+async function processQueue() {
+  if (isRunning || runQueue.length === 0) return;
+  isRunning = true;
+  const item = runQueue.shift()!;
+  try {
+    const result = await runCopilotInternal(item.copilotId, item.userId);
+    item.resolve(result);
+  } catch (err) {
+    item.reject(err);
+  } finally {
+    isRunning = false;
+    processQueue();
+  }
+}
 
 async function getActiveSubscription(userId: number) {
   const subs = await db
@@ -50,17 +80,10 @@ async function validateCopilotCanActivate(copilotId: number) {
     );
   }
 
-  if (!copilot.emailProfileId) {
-    throw Object.assign(
-      new Error("Email profile is not properly configured"),
-      { statusCode: 400 }
-    );
-  }
-
   const [profile] = await db
     .select()
     .from(emailProfiles)
-    .where(eq(emailProfiles.id, copilot.emailProfileId));
+    .where(eq(emailProfiles.id, copilot.emailProfileId!));
 
   if (!profile || !profile.smtpHost || !profile.email || !profile.smtpPass) {
     throw Object.assign(
@@ -165,6 +188,26 @@ export async function updateCopilotStatus(
 }
 
 export async function runCopilot(id: number, userId: number) {
+  if (isRunning) {
+    const alreadyQueued = runQueue.some((item) => item.copilotId === id);
+    if (alreadyQueued) {
+      throw Object.assign(new Error("Copilot is already queued to run"), { statusCode: 409 });
+    }
+    return new Promise((resolve, reject) => {
+      runQueue.push({ copilotId: id, userId, resolve, reject });
+    });
+  }
+
+  isRunning = true;
+  try {
+    return await runCopilotInternal(id, userId);
+  } finally {
+    isRunning = false;
+    processQueue();
+  }
+}
+
+async function runCopilotInternal(id: number, userId: number) {
   const [copilot] = await db
     .select()
     .from(copilots)
@@ -174,9 +217,13 @@ export async function runCopilot(id: number, userId: number) {
     throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
   }
 
+  if (copilot.status === "running") {
+    throw Object.assign(new Error("Copilot is already running"), { statusCode: 409 });
+  }
+
   console.log(` ${new Date().toLocaleTimeString()} - 🚀 Triggering copilot ${id} for user ${userId}`);
 
-  await db
+  const [updated] = await db
     .update(copilots)
     .set({
       status: "running",
@@ -184,7 +231,12 @@ export async function runCopilot(id: number, userId: number) {
       lastError: null,
       updatedAt: new Date(),
     })
-    .where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
+    .where(and(eq(copilots.id, id), eq(copilots.userId, userId), ne(copilots.status, "running")))
+    .returning();
+
+  if (!updated) {
+    throw Object.assign(new Error("Copilot is already running"), { statusCode: 409 });
+  }
 
   if (copilot.scrapeProfileId) {
     const [profile] = await db
@@ -193,48 +245,48 @@ export async function runCopilot(id: number, userId: number) {
       .where(eq(scrapeProfiles.id, copilot.scrapeProfileId));
     if (profile) {
       console.log(` ${new Date().toLocaleTimeString()} - 🔍 Starting scrape job for copilot ${id} with limit ${copilot.sendLimit}`);
-      runScrapeJob(profile, undefined, copilot.sendLimit)
-        .then((scrapeJob) => {
-          console.log(` ${new Date().toLocaleTimeString()} - 📋 Scrape job ${scrapeJob.id} completed for copilot ${id}`);
-          db.update(copilots)
-            .set({ lastJobId: scrapeJob.id, updatedAt: new Date() })
-            .where(eq(copilots.id, id))
-            .catch(console.error);
-        })
-        .catch((err) => {
-          console.error(` ${new Date().toLocaleTimeString()} - ⚠️ Scrape job failed for copilot ${id}:`, err);
-          db.update(copilots)
-            .set({ status: "paused", lastError: "Scrape job failed: " + err.message, updatedAt: new Date() })
-            .where(eq(copilots.id, id))
-            .catch(console.error);
-        })
-        .finally(() => {
-          console.log(` ${new Date().toLocaleTimeString()} - 📧 Starting email job for copilot ${id}`);
-          sendPendingLeads(id)
-            .then(() => {
-              console.log(` ${new Date().toLocaleTimeString()} - ✅ Email job completed for copilot ${id}`);
-              db.update(copilots)
-                .set({ status: "completed", updatedAt: new Date() })
-                .where(eq(copilots.id, id))
-                .catch(console.error);
-            })
-            .catch((err) => {
-              console.error(` ${new Date().toLocaleTimeString()} - ❌ Email job failed for copilot ${id}:`, err);
-              db.update(copilots)
-                .set({ status: "paused", lastError: "Email job failed: " + err.message, updatedAt: new Date() })
-                .where(eq(copilots.id, id))
-                .catch(console.error);
-            });
-        });
+      try {
+        const scrapeJob = await runScrapeJob(profile, undefined, copilot.sendLimit);
+        console.log(` ${new Date().toLocaleTimeString()} - 📋 Scrape job ${scrapeJob.id} completed for copilot ${id}`);
+        await db
+          .update(copilots)
+          .set({ lastJobId: scrapeJob.id, updatedAt: new Date() })
+          .where(eq(copilots.id, id));
+      } catch (err: any) {
+        console.error(` ${new Date().toLocaleTimeString()} - ⚠️ Scrape job failed for copilot ${id}:`, err);
+        await db
+          .update(copilots)
+          .set({ status: "paused", lastError: "Scrape job failed: " + err.message, updatedAt: new Date() })
+          .where(eq(copilots.id, id));
+        return {
+          message: "Copilot scrape failed",
+          copilotId: id,
+          status: "paused",
+        };
+      }
     }
   }
 
-
+  console.log(` ${new Date().toLocaleTimeString()} - 📧 Starting email job for copilot ${id}`);
+  try {
+    await sendPendingLeads(id);
+    console.log(` ${new Date().toLocaleTimeString()} - ✅ Email job completed for copilot ${id}`);
+    await db
+      .update(copilots)
+      .set({ status: "completed", updatedAt: new Date() })
+      .where(eq(copilots.id, id));
+  } catch (err: any) {
+    console.error(` ${new Date().toLocaleTimeString()} - ❌ Email job failed for copilot ${id}:`, err);
+    await db
+      .update(copilots)
+      .set({ status: "paused", lastError: "Email job failed: " + err.message, updatedAt: new Date() })
+      .where(eq(copilots.id, id));
+  }
 
   return {
     message: "Copilot triggered successfully",
     copilotId: id,
-    status: "running",
+    status: "completed",
   };
 }
 

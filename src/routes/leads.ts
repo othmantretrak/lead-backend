@@ -11,22 +11,22 @@ leadsRouter.get(
   validate(listLeadsSchema, "query"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.json(await leadService.listLeads(req.query as any));
+      res.json(await leadService.listLeads(req.query as any, req.dbUser.id));
     } catch (err) { next(err); }
   }
 );
 
 // GET /leads/stats/summary — must be before /:id
-leadsRouter.get("/stats/summary", async (_req: Request, res: Response, next: NextFunction) => {
+leadsRouter.get("/stats/summary", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    res.json(await leadService.getLeadStats());
+    res.json(await leadService.getLeadStats(req.dbUser.id));
   } catch (err) { next(err); }
 });
 
 // GET /leads/:id
 leadsRouter.get("/:id", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    res.json(await leadService.getLead(parseInt(req.params.id)));
+    res.json(await leadService.getLead(parseInt(req.params.id), req.dbUser.id));
   } catch (err) { next(err); }
 });
 
@@ -36,7 +36,7 @@ leadsRouter.patch(
   validate(patchLeadSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.json(await leadService.patchLead(parseInt(req.params.id), req.body));
+      res.json(await leadService.patchLead(parseInt(req.params.id), req.dbUser.id, req.body));
     } catch (err) { next(err); }
   }
 );
@@ -44,7 +44,7 @@ leadsRouter.patch(
 // DELETE /leads/:id
 leadsRouter.delete("/:id", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    await leadService.deleteLead(parseInt(req.params.id));
+    await leadService.deleteLead(parseInt(req.params.id), req.dbUser.id);
     res.json({ success: true });
   } catch (err) { next(err); }
 });

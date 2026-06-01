@@ -45,3 +45,21 @@ export function assertUser(req: Request, res: Response, next: NextFunction): voi
   }
   next();
 }
+
+/**
+ * Resolves auth inline (not as middleware) — used by routes mounted before
+ * requireAuth, where the router is partially public (e.g. /billing).
+ */
+export async function resolveUser(req: Request, res: Response): Promise<typeof users.$inferSelect | null> {
+  const { userId: clerkId } = getAuth(req);
+  if (!clerkId) {
+    res.status(401).json({ error: "Unauthorized" });
+    return null;
+  }
+  const [user] = await db.select().from(users).where(eq(users.clerkId, clerkId));
+  if (!user) {
+    res.status(404).json({ error: "User not found" });
+    return null;
+  }
+  return user;
+}

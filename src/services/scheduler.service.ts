@@ -9,10 +9,7 @@ interface SchedulerState {
   copilotId: number | null;
 }
 
-const state: SchedulerState = {
-  timeout: null,
-  copilotId: null,
-};
+const stateMap = new Map<number, SchedulerState>();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -41,12 +38,19 @@ async function getActiveCopilot(userId: number) {
   return copilotList[0] || null;
 }
 
-function stopAll() {
-  if (state.timeout) {
-    clearTimeout(state.timeout);
-    state.timeout = null;
+function stopUser(userId: number) {
+  const existing = stateMap.get(userId);
+  if (existing) {
+    if (existing.timeout) clearTimeout(existing.timeout);
+    stateMap.delete(userId);
   }
-  state.copilotId = null;
+}
+
+function stopAll() {
+  for (const [userId, s] of stateMap) {
+    if (s.timeout) clearTimeout(s.timeout);
+  }
+  stateMap.clear();
 }
 
 function calculateDelay(runAt: string): number {
@@ -66,7 +70,7 @@ function calculateDelay(runAt: string): number {
 
 export async function initScheduler(userId: number): Promise<void> {
   console.log(`⏰ Initialising scheduler for user ${userId}...`);
-  stopAll();
+  stopUser(userId);
 
   try {
     await getActiveSubscription(userId);
@@ -82,9 +86,9 @@ export async function initScheduler(userId: number): Promise<void> {
     return;
   }
 
-  state.copilotId = copilot.id;
+  const copilotId = copilot.id;
 
-  console.log(`${new Date().toLocaleTimeString()} - 📡 Using copilot: "${copilot.name}" (id: ${copilot.id})`);
+  console.log(`${new Date().toLocaleTimeString()} - 📡 Using copilot: "${copilot.name}" (id: ${copilotId})`);
 
   const settings = copilot.settings as { schedule?: { runAt?: string } } | undefined;
   const runAt = settings?.schedule?.runAt ?? "09:00";
@@ -92,20 +96,18 @@ export async function initScheduler(userId: number): Promise<void> {
   const delay = calculateDelay(runAt);
   console.log(`   ⏱️  Copilot will run at ${runAt} (in ${Math.round(delay / 1000 / 60)} minutes)`);
 
-  state.timeout = setTimeout(async () => {
-    console.log(`\n🚀 [${new Date().toISOString()}] Running copilot ${state.copilotId}`);
+  const timeout = setTimeout(async () => {
+    console.log(`\n🚀 [${new Date().toISOString()}] Running copilot ${copilotId}`);
     try {
-      if (!state.copilotId) {
-        console.error("❌ No copilot configured");
-        return;
-      }
-      await runCopilot(state.copilotId, userId);
+      await runCopilot(copilotId, userId);
     } catch (e) {
       console.error("❌ Copilot run error:", e);
     }
-    console.log(`   🛑 Copilot finished. Scheduler stopped.`);
-    state.timeout = null;
+    console.log(`   🛑 Copilot finished for user ${userId}. Scheduler removed.`);
+    stateMap.delete(userId);
   }, delay);
+
+  stateMap.set(userId, { timeout, copilotId });
 
   console.log("⏰ Scheduler ready.\n");
 }
@@ -116,8 +118,11 @@ export async function restartScheduler(userId: number): Promise<void> {
 }
 
 export function getSchedulerStatus() {
-  return {
-    active: state.timeout !== null,
-    copilotId: state.copilotId,
-  };
+  const active: { userId: number; copilotId: number | null }[] = [];
+  for (const [userId, s] of stateMap) {
+    if (s.timeout) {
+      active.push({ userId, copilotId: s.copilotId });
+    }
+  }
+  return { activeSchedulers: active, count: active.length };
 }

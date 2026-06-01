@@ -1,11 +1,11 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { db } from "../db/drizzle";
-import { subscriptions, invoices, users, usage, copilots, emailProfiles } from "../db/schema";
+import { subscriptions, invoices, usage, copilots, emailProfiles } from "../db/schema";
 import { eq, desc, and, lte, gte, ne, count } from "drizzle-orm";
 import createMollieClient, { MollieClient, SequenceType } from "@mollie/api-client";
-import { getAuth } from "@clerk/express";
 import { z } from "zod";
 import { validate } from "../middleware/validate.middleware";
+import { resolveUser } from "../middleware/auth.middleware";
 
 export const billingRouter: Router = Router();
 
@@ -77,22 +77,7 @@ function mapMollieStatus(mollieStatus: string): "active" | "canceled" | "past_du
     return map[mollieStatus] ?? "pending";
 }
 
-// ─── Auth helper ───────────────────────────────────────────────────────────────
-// Billing routes can't all use requireAuth from middleware because the Mollie
-// webhook is unauthenticated. This helper is used by the per-route auth checks.
-async function resolveUser(req: Request, res: Response): Promise<typeof users.$inferSelect | null> {
-    const { userId: clerkId } = getAuth(req);
-    if (!clerkId) {
-        res.status(401).json({ error: "Unauthorized" });
-        return null;
-    }
-    const user = await db.select().from(users).where(eq(users.clerkId, clerkId)).then((r) => r[0]);
-    if (!user) {
-        res.status(404).json({ error: "User not found" });
-        return null;
-    }
-    return user;
-}
+
 
 // ─── Validators ────────────────────────────────────────────────────────────────
 const subscribeSchema = z.object({

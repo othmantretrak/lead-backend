@@ -21,7 +21,6 @@ import { scrapeProfilesRouter } from "./routes/scrape-profiles";
 import { usersRouter } from "./routes/user";
 
 // ─── Services ─────────────────────────────────────────────────────────────────
-import { sendPendingLeads } from "./services/mailer.service";
 import { initScheduler, getSchedulerStatus } from "./services/scheduler.service";
 
 // ─── DB ───────────────────────────────────────────────────────────────────────
@@ -72,42 +71,6 @@ app.use("/email-profiles", emailProfilesRouter);
 app.use("/scrape-profiles", scrapeProfilesRouter);
 
 // ─── Utility endpoints ────────────────────────────────────────────────────────
-
-// POST /send-now — manual trigger for the daily send job (useful for testing)
-app.post("/send-now", async (req, res, next) => {
-  try {
-    const user = req.dbUser;
-
-    const [sub] = await db
-      .select()
-      .from(subscriptions)
-      .where(eq(subscriptions.userId, user.id))
-      .orderBy(desc(subscriptions.createdAt))
-      .limit(1);
-
-    if (!sub || sub.status !== "active") {
-      res.status(404).json({ error: "No active subscription found" });
-      return;
-    }
-
-    const [copilot] = await db
-      .select()
-      .from(copilots)
-      .where(and(eq(copilots.userId, user.id), eq(copilots.status, "active")))
-      .orderBy(desc(copilots.updatedAt))
-      .limit(1);
-
-    if (!copilot) {
-      res.status(404).json({ error: "No active copilot found" });
-      return;
-    }
-
-    sendPendingLeads(copilot.id).catch(console.error);
-    res.json({ message: "Send job triggered. Check server logs for progress.", copilotId: copilot.id });
-  } catch (err) {
-    next(err);
-  }
-});
 
 // GET /scheduler/status — shows which cron jobs are active
 app.get("/scheduler/status", (_req, res) => {

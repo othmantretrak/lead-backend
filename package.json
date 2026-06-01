@@ -10,9 +10,6 @@
     "db:seed": "ts-node src/db/seed.ts",
     "db:generate": "drizzle-kit generate"
   },
-  "prisma": {
-    "seed": "ts-node prisma/seed.ts"
-  },
   "dependencies": {
     "@clerk/express": "^2.1.12",
     "@mollie/api-client": "^4.5.0",
