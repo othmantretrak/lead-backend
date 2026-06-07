@@ -13,7 +13,7 @@ export async function listLeads({ status, page, limit }: ListLeadsInput, userId:
   const [rows, totalRows] = await Promise.all([
     db.query.leads.findMany({
       where,
-      orderBy: desc(leads.scrapedAt),
+      orderBy: status === "sent" ? desc(leads.emailedAt) : desc(leads.scrapedAt),
       limit,
       offset,
       with: {
