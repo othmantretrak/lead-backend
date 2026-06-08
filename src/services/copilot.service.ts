@@ -157,7 +157,6 @@ export async function duplicateCopilot(id: number, userId: number) {
       scrapeProfileId: original.scrapeProfileId,
       templateId: original.templateId,
       settings: original.settings,
-      emailsSent: 0,
       emailsOpened: 0,
       emailsReplied: 0,
     })
@@ -335,13 +334,18 @@ export async function getCopilotStatus(id: number, userId: number) {
     .from(leads)
     .where(and(eq(leads.userId, userId), eq(leads.status, "new")));
 
+  const sentLeadsCount = await db
+    .select({ count: count() })
+    .from(leads)
+    .where(and(eq(leads.userId, userId), eq(leads.status, "sent")));
+
   return {
     id: copilot.id,
     name: copilot.name,
     status: copilot.status,
     lastRunAt: copilot.lastRunAt,
     lastError: copilot.lastError,
-    emailsSent: copilot.emailsSent,
+    emailsSent: Number(sentLeadsCount[0]?.count ?? 0),
     emailsOpened: copilot.emailsOpened,
     emailsReplied: copilot.emailsReplied,
     newLeadsCount: Number(newLeadsCount[0]?.count ?? 0),

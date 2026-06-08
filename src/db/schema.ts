@@ -154,7 +154,7 @@ export const leads = pgTable("leads", {
   userId: integer("user_id")
     .references(() => users.id, { onDelete: "set null" }),
   companyName: varchar("company_name", { length: 255 }).notNull(),
-  email: varchar("email", { length: 255 }).unique(),
+  email: varchar("email", { length: 255 }),
   website: text("website"),
   phone: varchar("phone", { length: 50 }),
   address: text("address"),
@@ -224,7 +224,6 @@ export const copilots = pgTable("copilots", {
     onDelete: "set null",
   }),
   settings: jsonb("settings").$type<Record<string, unknown>>().notNull().default({}),
-  emailsSent: integer("emails_sent").notNull().default(0),
   emailsOpened: integer("emails_opened").notNull().default(0),
   emailsReplied: integer("emails_replied").notNull().default(0),
   lastRunAt: timestamp("last_run_at"),

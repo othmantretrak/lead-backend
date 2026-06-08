@@ -1,6 +1,6 @@
 import nodemailer from "nodemailer";
 import { leads, emailTemplates, emailLogs, emailProfiles, copilots } from "../db/schema";
-import { eq, gte, and, count, inArray, sql, or } from "drizzle-orm";
+import { eq, gte, and, count, inArray, or } from "drizzle-orm";
 import type { Lead, EmailTemplate } from "../db/types";
 import { db } from "../db/drizzle";
 
@@ -68,11 +68,6 @@ async function sendEmail(
     await db.update(leads).set({ status: "sent", emailedAt: new Date() }).where(eq(leads.id, lead.id));
 
     console.log(`✅ Email sent to ${lead.email} (${lead.companyName})`);
-
-    await db
-      .update(copilots)
-      .set({ emailsSent: sql`${copilots.emailsSent} + 1` })
-      .where(eq(copilots.id, copilotId));
 
     return { success: true };
   } catch (error) {
