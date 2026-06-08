@@ -1,6 +1,6 @@
 import { db } from "../db/drizzle";
 import { copilots, subscriptions, scrapeProfiles, emailProfiles, emailTemplates, scrapeJobs, emailLogs, leads } from "../db/schema";
-import { and, desc, eq, gte, count, ne } from "drizzle-orm";
+import { and, desc, eq, gte, count, ne, getTableColumns, sql } from "drizzle-orm";
 import { sendPendingLeads } from "./mailer.service";
 import { runScrapeJob } from "./scraper.service";
 import { incrementUsage } from "../lib/helpers";
@@ -94,12 +94,29 @@ async function validateCopilotCanActivate(copilotId: number) {
 }
 
 export async function listCopilots(userId: number) {
-  return db.select().from(copilots).where(eq(copilots.userId, userId));
+  return db
+    .select({
+      ...getTableColumns(copilots),
+      emailsSent: sql<number>`
+        (SELECT COUNT(*) FROM ${leads}
+         WHERE ${leads.copilotId} = ${copilots.id}
+         AND ${leads.status} = 'sent')
+      `,
+    })
+    .from(copilots)
+    .where(eq(copilots.userId, userId));
 }
 
 export async function getCopilot(id: number, userId: number) {
   const [row] = await db
-    .select()
+    .select({
+      ...getTableColumns(copilots),
+      emailsSent: sql<number>`
+        (SELECT COUNT(*) FROM ${leads}
+         WHERE ${leads.copilotId} = ${copilots.id}
+         AND ${leads.status} = 'sent')
+      `,
+    })
     .from(copilots)
     .where(and(eq(copilots.id, id), eq(copilots.userId, userId)));
   if (!row) throw Object.assign(new Error("Copilot not found"), { statusCode: 404 });
@@ -337,7 +354,7 @@ export async function getCopilotStatus(id: number, userId: number) {
   const sentLeadsCount = await db
     .select({ count: count() })
     .from(leads)
-    .where(and(eq(leads.userId, userId), eq(leads.status, "sent")));
+    .where(and(eq(leads.copilotId, id), eq(leads.status, "sent")));
 
   return {
     id: copilot.id,

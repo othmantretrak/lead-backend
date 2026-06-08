@@ -65,7 +65,7 @@ async function sendEmail(
       subject,
       status: "sent",
     });
-    await db.update(leads).set({ status: "sent", emailedAt: new Date() }).where(eq(leads.id, lead.id));
+    await db.update(leads).set({ status: "sent", emailedAt: new Date(), copilotId }).where(eq(leads.id, lead.id));
 
     console.log(`✅ Email sent to ${lead.email} (${lead.companyName})`);
 

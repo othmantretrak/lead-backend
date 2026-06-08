@@ -165,6 +165,8 @@ export const leads = pgTable("leads", {
     .references(() => scrapeProfiles.id, { onDelete: "set null" }),
   scrapeJobId: integer("scrape_job_id")
     .references(() => scrapeJobs.id, { onDelete: "set null" }),
+  copilotId: integer("copilot_id")
+    .references(() => copilots.id, { onDelete: "set null" }),
   scrapedAt: timestamp("scraped_at").notNull().defaultNow(),
   status: leadStatusEnum("status").notNull().default("new"),
   notes: text("notes"),                // ✅ Added: used by patchLead
