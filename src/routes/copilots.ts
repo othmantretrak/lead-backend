@@ -108,3 +108,17 @@ copilotsRouter.post("/:id/duplicate", async (req: Request, res: Response, next: 
         res.status(201).json(created);
     } catch (err) { next(err); }
 });
+
+// POST /api/copilots/:id/activate
+copilotsRouter.post("/:id/activate", async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const updated = await copilotService.updateCopilotStatus(
+            Number(req.params.id),
+            req.dbUser.id,
+            { status: "active" as const }
+        );
+        await restartScheduler(req.dbUser.id);
+        console.log(`Activated copilot ${req.params.id} and restarted scheduler for user ${req.dbUser.id}`);
+        res.json({ message: "Copilot activated and scheduler re-armed", copilot: updated });
+    } catch (err) { next(err); }
+});

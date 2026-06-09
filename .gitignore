@@ -57,3 +57,5 @@ ehthumbs.db
 
 # Local development
 .cache/
+AGENTS.md
+lead-backend.postman_collection.json
