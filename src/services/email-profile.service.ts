@@ -2,6 +2,7 @@ import { db } from "../db/drizzle";
 import { emailProfiles } from "../db/schema";
 import { and, eq } from "drizzle-orm";
 import { testSmtpConnection, type SendResult } from "./mailer.service";
+import { getValidAccessToken } from "./oauth.service";
 import { incrementUsage } from "../lib/helpers";
 import type {
   CreateEmailProfileInput,
@@ -55,8 +56,8 @@ export async function deleteEmailProfile(id: number, userId: number) {
 }
 
 /**
- * Verifies the SMTP config stored in the given profile (not global settings).
- * Updates the profile status based on the result.
+ * Verifies an email profile. For SMTP profiles, tests the SMTP connection.
+ * For OAuth profiles (Gmail/Outlook), validates the access token is still valid.
  */
 export async function verifyEmailProfile(id: number, userId: number): Promise<SendResult> {
   const [profile] = await db
@@ -65,34 +66,50 @@ export async function verifyEmailProfile(id: number, userId: number): Promise<Se
     .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
   if (!profile) throw Object.assign(new Error("Email profile not found"), { statusCode: 404 });
 
-  // Validate SMTP config exists before testing
-  if (!profile.smtpHost || !profile.email || !profile.smtpPass) {
-    throw Object.assign(
-      new Error("SMTP configuration incomplete. smtpHost, email, and smtpPass are required."),
-      { statusCode: 400 }
-    );
+  if (profile.provider === "smtp") {
+    if (!profile.smtpHost || !profile.email || !profile.smtpPass) {
+      throw Object.assign(
+        new Error("SMTP configuration incomplete. smtpHost, email, and smtpPass are required."),
+        { statusCode: 400 }
+      );
+    }
+
+    const result = await testSmtpConnection({
+      host: profile.smtpHost,
+      port: profile.smtpPort ?? 587,
+      email: profile.email,
+      pass: profile.smtpPass,
+      sendName: profile.sendName ?? profile.email,
+    });
+
+    if (result.success) {
+      await db
+        .update(emailProfiles)
+        .set({ status: "active", lastVerifiedAt: new Date(), updatedAt: new Date() })
+        .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
+    } else {
+      await db
+        .update(emailProfiles)
+        .set({ status: "error", updatedAt: new Date() })
+        .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
+    }
+
+    return result;
   }
 
-  // Pass the profile's own SMTP config to the tester
-  const result = await testSmtpConnection({
-    host: profile.smtpHost,
-    port: profile.smtpPort ?? 587,
-    email: profile.email,
-    pass: profile.smtpPass,
-    sendName: profile.sendName ?? profile.email,
-  });
-
-  if (result.success) {
+  // OAuth profile — try to refresh the token
+  const token = await getValidAccessToken(id);
+  if (token) {
     await db
       .update(emailProfiles)
       .set({ status: "active", lastVerifiedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
-  } else {
-    await db
-      .update(emailProfiles)
-      .set({ status: "error", updatedAt: new Date() })
-      .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
+    return { success: true };
   }
 
-  return result;
+  await db
+    .update(emailProfiles)
+    .set({ status: "error", updatedAt: new Date() })
+    .where(and(eq(emailProfiles.userId, userId), eq(emailProfiles.id, id)));
+  return { success: false, error: "Failed to refresh OAuth token" };
 }

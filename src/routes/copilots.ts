@@ -15,6 +15,7 @@ copilotsRouter.get("/", async (req: Request, res: Response, next: NextFunction) 
     try {
         const rows = await copilotService.listCopilots(req.dbUser.id);
         res.json(rows);
+        console.log("Listed copilots", rows);
     } catch (err) { next(err); }
 });
 

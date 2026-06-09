@@ -85,11 +85,20 @@ async function validateCopilotCanActivate(copilotId: number) {
     .from(emailProfiles)
     .where(eq(emailProfiles.id, copilot.emailProfileId!));
 
-  if (!profile || !profile.smtpHost || !profile.email || !profile.smtpPass) {
-    throw Object.assign(
-      new Error("Email profile is not properly configured"),
-      { statusCode: 400 }
-    );
+  if (profile.provider === "smtp") {
+    if (!profile.smtpHost || !profile.smtpPass) {
+      throw Object.assign(
+        new Error("SMTP email profile is not properly configured: missing SMTP host or password"),
+        { statusCode: 400 }
+      );
+    }
+  } else {
+    if (!profile.email || !profile.refreshToken) {
+      throw Object.assign(
+        new Error(`${profile.provider} email profile is not properly configured: missing OAuth tokens`),
+        { statusCode: 400 }
+      );
+    }
   }
 }
 

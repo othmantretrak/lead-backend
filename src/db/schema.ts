@@ -13,6 +13,7 @@ import {
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
 export const emailProviderEnum = pgEnum("email_provider", ["gmail", "outlook", "smtp"]);
+export const oauthProviderEnum = pgEnum("oauth_provider", ["google", "microsoft"]);
 export const emailProfileStatusEnum = pgEnum("email_profile_status", ["active", "inactive", "error"]);
 
 export const scrapeStatusEnum = pgEnum("scrape_status", ["idle", "running", "done", "error"]);
@@ -72,6 +73,21 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// ─── OAuth States ─────────────────────────────────────────────────────────────
+// Used for CSRF protection during OAuth flows.
+// Each entry maps a random state string to a userId + provider.
+// Entries are deleted after use or after TTL (10 minutes).
+
+export const oauthStates = pgTable("oauth_states", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  provider: oauthProviderEnum("provider").notNull(),
+  state: varchar("state", { length: 255 }).notNull().unique(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // ─── Email Profiles ───────────────────────────────────────────────────────────
 
 export const emailProfiles = pgTable("email_profiles", {
@@ -85,9 +101,14 @@ export const emailProfiles = pgTable("email_profiles", {
   provider: emailProviderEnum("provider").notNull().default("smtp"),
   smtpHost: varchar("smtp_host", { length: 255 }),
   smtpPort: integer("smtp_port").default(587),
-  smtpPass: text("smtp_pass"), // store encrypted in practice
+  smtpPass: text("smtp_pass"),
   status: emailProfileStatusEnum("status").notNull().default("inactive"),
   sentToday: integer("sent_today").notNull().default(0),
+  dailyLimit: integer("daily_limit").notNull().default(100),
+  providerAccountId: varchar("provider_account_id", { length: 255 }),
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  tokenExpiresAt: timestamp("token_expires_at"),
   lastVerifiedAt: timestamp("last_verified_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -317,3 +338,6 @@ export type NewSubscription = typeof subscriptions.$inferInsert;
 
 export type Invoice = typeof invoices.$inferSelect;
 export type NewInvoice = typeof invoices.$inferInsert;
+
+export type OAuthState = typeof oauthStates.$inferSelect;
+export type NewOAuthState = typeof oauthStates.$inferInsert;

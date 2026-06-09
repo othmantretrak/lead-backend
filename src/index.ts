@@ -19,6 +19,7 @@ import { copilotsRouter } from "./routes/copilots";
 import { emailProfilesRouter } from "./routes/email-profiles";
 import { scrapeProfilesRouter } from "./routes/scrape-profiles";
 import { usersRouter } from "./routes/user";
+import { oauthRouter } from "./routes/oauth";
 
 // ─── Services ─────────────────────────────────────────────────────────────────
 import { initScheduler, getSchedulerStatus } from "./services/scheduler.service";
@@ -36,7 +37,7 @@ app.use(express.urlencoded({ extended: true })); // required for Mollie webhooks
 app.use(express.json());
 app.use(
   cors({
-    origin: process.env.ALLOWED_ORIGIN || "http://localhost:3000",
+    origin: process.env.ALLOWED_ORIGIN?.split(",").map(s => s.trim()) || ["http://localhost:3000"],
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
@@ -58,6 +59,7 @@ app.use("/billing", billingRouter);
 // ─── Authenticated routes ────────────────────────────────────────────────────
 // requireAuth resolves the Clerk session to req.dbUser for all routes below
 app.use("/users", usersRouter);
+app.use("/auth", oauthRouter);
 
 app.use(requireAuth);
 
