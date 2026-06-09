@@ -6,9 +6,11 @@ import { eq, and, desc } from "drizzle-orm";
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 import { requireAuth } from "./middleware/auth.middleware";
+import { requireAdminKey } from "./middleware/admin.middleware";
 import { errorHandler } from "./middleware/error.middleware";
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
+import { adminRouter } from "./routes/admin";
 import { leadsRouter } from "./routes/leads";
 import { emailsRouter } from "./routes/emails";
 import { scraperRouter } from "./routes/scraper";
@@ -55,6 +57,9 @@ app.get("/health", (_req, res) => {
 // without auth, and /billing/plans is public. Auth is handled inside the router
 // per-route via getAuth(), so we mount it without requireAuth here.
 app.use("/billing", billingRouter);
+
+// ─── Admin routes (API key auth, no Clerk required) ──────────────────────────
+app.use("/admin", requireAdminKey, adminRouter);
 
 // ─── Authenticated routes ────────────────────────────────────────────────────
 // requireAuth resolves the Clerk session to req.dbUser for all routes below
