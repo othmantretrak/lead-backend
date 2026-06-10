@@ -485,9 +485,13 @@ export async function runScrapeJob(
       });
       if (batch.length === 0) break;
 
-      // Restart the page each batch to prevent Chromium memory buildup
+      // Restart the page (and its context) each batch to prevent Chromium memory buildup
       if (totalChecked > 0) {
-        await emailPage?.close().catch(() => {});
+        try {
+          await emailPage!.context().close();
+        } catch {
+          await emailPage?.close().catch(() => {});
+        }
         emailPage = await newStealthPage(browser);
         await delay(1000);
       }
@@ -531,6 +535,15 @@ export async function runScrapeJob(
         newLeadsCount++;
         console.log(`  ✅ Saved: "${lead.companyName}" <${email}> (total: ${newLeadsCount})`);
         await randomDelay(1200, 2500);
+      }
+    }
+
+    // Clean up last email page context
+    if (emailPage) {
+      try {
+        await emailPage.context().close();
+      } catch {
+        await emailPage.close().catch(() => {});
       }
     }
 
