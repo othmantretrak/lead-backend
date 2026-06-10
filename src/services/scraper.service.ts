@@ -474,50 +474,64 @@ export async function runScrapeJob(
     console.log(`\n📋 Maps scrape done — ${foundCount} listings found. Starting email extraction...`);
 
     // Reuse the browser but open a fresh page for website crawling
-    let emailPage = await newStealthPage(browser);
+    let emailPage: Page | null = await newStealthPage(browser);
+    let totalChecked = 0;
+    const EMAIL_BATCH_SIZE = PERIODIC_RESTART_THRESHOLD;
 
-    const pendingLeads = await db.query.leads.findMany({
-      where: and(eq(leads.userId, profile.userId), eq(leads.status, "pending_email"))
-    });
-    console.log(`📧 ${pendingLeads.length} leads to check for emails for jobId ${job.id}`);
-
-    for (let i = 0; i < pendingLeads.length; i++) {
-      const lead = pendingLeads[i];
-      console.log(`\n📧 [${i + 1}/${pendingLeads.length}] Processing: "${lead.companyName}"`);
-
-      if (!lead.website) {
-        await db.update(leads).set({ status: "failed" }).where(eq(leads.id, lead.id));
-        console.log(`  ↳ No website — marking failed`);
-        continue;
-      }
-
-      console.log(`  ↳ Scraping: ${lead.website}`);
-      const email = await findEmailOnWebsite(emailPage, lead.website);
-
-      if (!email) {
-        await db.update(leads).set({ status: "failed" }).where(eq(leads.id, lead.id));
-        console.log(`  ↳ No email found — marking failed`);
-        continue;
-      }
-
-      console.log(`  ↳ Found email: ${email} — checking for duplicates...`);
-      const emailExists = await db.query.leads.findFirst({
-        where: and(eq(leads.email, email), eq(leads.userId, profile.userId)),
+    while (true) {
+      const batch = await db.query.leads.findMany({
+        where: and(eq(leads.userId, profile.userId), eq(leads.status, "pending_email")),
+        limit: EMAIL_BATCH_SIZE,
       });
-      if (emailExists) {
-        await db.update(leads).set({ status: "failed" }).where(eq(leads.id, lead.id));
-        console.log(`  ↳ Email already in DB (lead #${emailExists.id}) — marking failed`);
-        continue;
+      if (batch.length === 0) break;
+
+      // Restart the page each batch to prevent Chromium memory buildup
+      if (totalChecked > 0) {
+        await emailPage?.close().catch(() => {});
+        emailPage = await newStealthPage(browser);
+        await delay(1000);
       }
 
-      await db
-        .update(leads)
-        .set({ email, status: "new" })
-        .where(eq(leads.id, lead.id));
+      console.log(`📧 Batch of ${batch.length} pending_email leads (${totalChecked} checked so far)`);
 
-      newLeadsCount++;
-      console.log(`  ✅ Saved: "${lead.companyName}" <${email}> (total: ${newLeadsCount})`);
-      await randomDelay(1200, 2500);
+      for (const lead of batch) {
+        totalChecked++;
+        console.log(`\n📧 [${totalChecked}] Processing: "${lead.companyName}"`);
+
+        if (!lead.website) {
+          await db.update(leads).set({ status: "failed" }).where(eq(leads.id, lead.id));
+          console.log(`  ↳ No website — marking failed`);
+          continue;
+        }
+
+        console.log(`  ↳ Scraping: ${lead.website}`);
+        const email = await findEmailOnWebsite(emailPage!, lead.website);
+
+        if (!email) {
+          await db.update(leads).set({ status: "failed" }).where(eq(leads.id, lead.id));
+          console.log(`  ↳ No email found — marking failed`);
+          continue;
+        }
+
+        console.log(`  ↳ Found email: ${email} — checking for duplicates...`);
+        const emailExists = await db.query.leads.findFirst({
+          where: and(eq(leads.email, email), eq(leads.userId, profile.userId)),
+        });
+        if (emailExists) {
+          await db.update(leads).set({ status: "failed" }).where(eq(leads.id, lead.id));
+          console.log(`  ↳ Email already in DB (lead #${emailExists.id}) — marking failed`);
+          continue;
+        }
+
+        await db
+          .update(leads)
+          .set({ email, status: "new" })
+          .where(eq(leads.id, lead.id));
+
+        newLeadsCount++;
+        console.log(`  ✅ Saved: "${lead.companyName}" <${email}> (total: ${newLeadsCount})`);
+        await randomDelay(1200, 2500);
+      }
     }
 
     await db
