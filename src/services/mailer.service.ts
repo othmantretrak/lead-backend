@@ -284,7 +284,7 @@ export async function sendPendingLeads(copilotId: number): Promise<void> {
     return;
   }
 
-  const limit = copilot.sendLimit ?? 0;
+  const limit = 100;
 
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
